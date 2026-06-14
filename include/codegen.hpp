@@ -63,6 +63,7 @@ private:
     llvm::Type* bool_type();
     llvm::Type* ptr_type();
     llvm::Type* void_type();
+    llvm::Type* i32_type();
     llvm::Type* i64_type();
     llvm::Type* i8_type();
 

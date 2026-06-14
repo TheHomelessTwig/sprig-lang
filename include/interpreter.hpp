@@ -184,10 +184,12 @@ class Interpreter {
     std::string                     base_path;       // directory of the main file
     std::unordered_set<std::string> included_files;  // canonical paths already run (dedup)
     std::vector<Program>            owned_programs;  // keeps included ASTs alive (SprigFunction holds raw ptrs into them)
+    std::vector<std::string>        program_args;    // argv passed from main
 
 public:
     void run(const Program& program, const std::string& source,
-             const std::string& file_path = "");
+             const std::string& file_path = "",
+             std::vector<std::string> args = {});
 
 private:
     // Formats a runtime error with source context:

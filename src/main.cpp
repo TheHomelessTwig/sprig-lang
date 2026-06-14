@@ -96,8 +96,11 @@ int main(int argc, char* argv[]) {
                       << " -o program -lm\n";
             std::cout << "Run:    ./program\n";
         } else {
+            std::vector<std::string> sprig_args;
+            for (int i = 0; i < argc; i++)
+                sprig_args.push_back(argv[i]);
             Interpreter interp;
-            interp.run(program, source, input_file);
+            interp.run(program, source, input_file, std::move(sprig_args));
         }
 
     } catch (std::exception& e) {

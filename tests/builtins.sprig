@@ -1,0 +1,17 @@
+// char operations
+let code = char_code("A")
+print(code)                    // 65
+let ch = char_from_code(65)
+print(ch)                      // A
+
+// substring
+let word = "hello world"
+print(substring(word, 6, 5))   // world
+print(substring(word, 0, 5))   // hello
+
+// string_contains
+when string_contains(word, "world"):
+    print("found")             // found
+
+// args
+print(args_count())            // number of argv entries

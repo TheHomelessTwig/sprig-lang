@@ -40,6 +40,15 @@ std::vector<TypeError> TypeChecker::check(const Program& program,
     bind("last",      Type::make_function({fresh()},            fresh()));
     bind("to_number", Type::make_function({Type::make_text()},  Type::make_number()));
     bind("to_text",   Type::make_function({fresh()},            Type::make_text()));
+    bind("char_code",      Type::make_function({Type::make_text()},                              Type::make_number()));
+    bind("char_from_code", Type::make_function({Type::make_number()},                            Type::make_text()));
+    bind("substring",      Type::make_function({Type::make_text(), Type::make_number(), Type::make_number()}, Type::make_text()));
+    bind("string_contains",Type::make_function({Type::make_text(), Type::make_text()},           Type::make_flag()));
+    bind("read_file",      Type::make_function({Type::make_text()},                              Type::make_text()));
+    bind("write_file",     Type::make_function({Type::make_text(), Type::make_text()},           Type::make_nothing()));
+    bind("args_count",     Type::make_function({},                                               Type::make_number()));
+    bind("args_get",       Type::make_function({Type::make_number()},                            Type::make_text()));
+    bind("exit",           Type::make_function({Type::make_number()},                            Type::make_nothing()));
 
     process_program(program);
 

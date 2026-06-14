@@ -41,7 +41,9 @@ static std::string type_name_of(const Value& v) {
 // ── Program entry ─────────────────────────────────────────────────────────────
 
 void Interpreter::run(const Program& program, const std::string& source,
-                      const std::string& file_path) {
+                      const std::string& file_path,
+                      std::vector<std::string> args) {
+    program_args = std::move(args);
     // Split source into lines so make_error() can show the offending line.
     std::istringstream stream(source);
     std::string        line_text;
@@ -578,6 +580,91 @@ Value Interpreter::eval_expression(const Expression* e, Environment& env) {
         }
         if (call_expr->callee == "ptr_to_number" || call_expr->callee == "number_to_ptr") {
             return eval_expression(call_expr->args[0].get(), env);
+        }
+
+        // ── String built-ins ─────────────────────────────────────────────────
+
+        if (call_expr->callee == "char_code") {
+            Value val = eval_expression(call_expr->args[0].get(), env);
+            if (val.kind != Value::Kind::String || val.str.empty())
+                throw std::runtime_error("char_code() requires a non-empty string");
+            return Value::make_number((double)(unsigned char)val.str[0]);
+        }
+
+        if (call_expr->callee == "char_from_code") {
+            Value val = eval_expression(call_expr->args[0].get(), env);
+            char ch   = (char)(int)val.number;
+            return Value::make_string(std::string(1, ch));
+        }
+
+        if (call_expr->callee == "substring") {
+            if (call_expr->args.size() != 3)
+                throw std::runtime_error("substring() takes 3 arguments");
+            Value str_val   = eval_expression(call_expr->args[0].get(), env);
+            Value start_val = eval_expression(call_expr->args[1].get(), env);
+            Value len_val   = eval_expression(call_expr->args[2].get(), env);
+            if (str_val.kind != Value::Kind::String)
+                throw std::runtime_error("substring() requires a string");
+            int start = (int)start_val.number;
+            int len   = (int)len_val.number;
+            int slen  = (int)str_val.str.size();
+            if (start < 0) start = 0;
+            if (start >= slen) return Value::make_string("");
+            if (start + len > slen) len = slen - start;
+            return Value::make_string(str_val.str.substr(start, len));
+        }
+
+        if (call_expr->callee == "string_contains") {
+            if (call_expr->args.size() != 2)
+                throw std::runtime_error("string_contains() takes 2 arguments");
+            Value hay = eval_expression(call_expr->args[0].get(), env);
+            Value ndl = eval_expression(call_expr->args[1].get(), env);
+            return Value::make_bool(hay.str.find(ndl.str) != std::string::npos);
+        }
+
+        // ── File I/O ──────────────────────────────────────────────────────────
+
+        if (call_expr->callee == "read_file") {
+            if (call_expr->args.size() != 1)
+                throw std::runtime_error("read_file() takes 1 argument");
+            Value path_val = eval_expression(call_expr->args[0].get(), env);
+            std::ifstream file(path_val.str);
+            if (!file)
+                throw std::runtime_error("read_file(): cannot open '" + path_val.str + "'");
+            std::stringstream buffer;
+            buffer << file.rdbuf();
+            return Value::make_string(buffer.str());
+        }
+
+        if (call_expr->callee == "write_file") {
+            if (call_expr->args.size() != 2)
+                throw std::runtime_error("write_file() takes 2 arguments");
+            Value path_val    = eval_expression(call_expr->args[0].get(), env);
+            Value content_val = eval_expression(call_expr->args[1].get(), env);
+            std::ofstream file(path_val.str);
+            if (!file)
+                throw std::runtime_error("write_file(): cannot open '" + path_val.str + "'");
+            file << content_val.str;
+            return Value::make_nil();
+        }
+
+        // ── Process arguments ─────────────────────────────────────────────────
+
+        if (call_expr->callee == "args_count") {
+            return Value::make_number((double)program_args.size());
+        }
+
+        if (call_expr->callee == "args_get") {
+            Value idx_val = eval_expression(call_expr->args[0].get(), env);
+            int idx = (int)idx_val.number;
+            if (idx < 0 || idx >= (int)program_args.size())
+                throw std::runtime_error("args_get(): index out of range");
+            return Value::make_string(program_args[idx]);
+        }
+
+        if (call_expr->callee == "exit") {
+            Value code_val = eval_expression(call_expr->args[0].get(), env);
+            std::exit((int)code_val.number);
         }
 
         // Fall through to user-defined function

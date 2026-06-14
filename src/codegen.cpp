@@ -17,6 +17,7 @@ llvm::Type* CodeGen::ptr_type()    { return llvm::PointerType::get(context, 0); 
 llvm::Type* CodeGen::void_type()   { return llvm::Type::getVoidTy(context); }
 llvm::Type* CodeGen::i64_type()    { return llvm::Type::getInt64Ty(context); }
 llvm::Type* CodeGen::i8_type()     { return llvm::Type::getInt8Ty(context); }
+llvm::Type* CodeGen::i32_type()    { return llvm::Type::getInt32Ty(context); }
 
 // ── Type mapping ──────────────────────────────────────────────────────────────
 
@@ -141,11 +142,25 @@ void CodeGen::compile(const Program& program,
 
     // ── main() ────────────────────────────────────────────────────────────────
     auto* main_fn = llvm::Function::Create(
-        llvm::FunctionType::get(llvm::Type::getInt32Ty(context), {}, false),
+        llvm::FunctionType::get(i32_type(), {i32_type(), ptr_type()}, false),
         llvm::Function::ExternalLinkage, "main", module.get());
+    auto arg_iterator = main_fn->arg_begin();
+    arg_iterator->setName("argc"); auto* argc_val = &*arg_iterator++;
+    arg_iterator->setName("argv"); auto* argv_val = &*arg_iterator;
     auto* main_entry = llvm::BasicBlock::Create(context, "entry", main_fn);
     builder->SetInsertPoint(main_entry);
     push_scope();
+
+    // Store argc/argv in globals so args_count()/args_get() can access them
+    auto* argc_global = new llvm::GlobalVariable(*module, i32_type(), false,
+        llvm::GlobalValue::InternalLinkage,
+        llvm::ConstantInt::get(i32_type(), 0), "__sprig_argc");
+    auto* argv_global = new llvm::GlobalVariable(*module, ptr_type(), false,
+        llvm::GlobalValue::InternalLinkage,
+        llvm::ConstantPointerNull::get(
+            llvm::cast<llvm::PointerType>(ptr_type())), "__sprig_argv");
+    builder->CreateStore(argc_val, argc_global);
+    builder->CreateStore(argv_val, argv_global);
 
     for (auto& stmt : program.stmts)
         if (!dynamic_cast<const FunctionStatement*>(stmt.get()))
@@ -153,8 +168,7 @@ void CodeGen::compile(const Program& program,
 
     pop_scope();
     if (!builder->GetInsertBlock()->getTerminator())
-        builder->CreateRet(
-            llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0));
+        builder->CreateRet(llvm::ConstantInt::get(i32_type(), 0));
 
     // ── Verify and emit ───────────────────────────────────────────────────────
     std::string verification_error;
@@ -198,6 +212,39 @@ void CodeGen::declare_runtime() {
     // free(ptr) -> void
     get_or_declare("free",
         llvm::FunctionType::get(void_type(), {ptr_type()}, false));
+    // strncpy(ptr dst, ptr src, i64 n) -> ptr
+    get_or_declare("strncpy",
+        llvm::FunctionType::get(ptr_type(),
+            {ptr_type(), ptr_type(), i64_type()}, false));
+    // strstr(ptr haystack, ptr needle) -> ptr
+    get_or_declare("strstr",
+        llvm::FunctionType::get(ptr_type(),
+            {ptr_type(), ptr_type()}, false));
+    // fopen(ptr path, ptr mode) -> ptr
+    get_or_declare("fopen",
+        llvm::FunctionType::get(ptr_type(),
+            {ptr_type(), ptr_type()}, false));
+    // fclose(ptr) -> i32
+    get_or_declare("fclose",
+        llvm::FunctionType::get(i32_type(), {ptr_type()}, false));
+    // fputs(ptr str, ptr stream) -> i32
+    get_or_declare("fputs",
+        llvm::FunctionType::get(i32_type(),
+            {ptr_type(), ptr_type()}, false));
+    // fread(ptr buf, i64 size, i64 count, ptr stream) -> i64
+    get_or_declare("fread",
+        llvm::FunctionType::get(i64_type(),
+            {ptr_type(), i64_type(), i64_type(), ptr_type()}, false));
+    // fseek(ptr stream, i64 offset, i32 whence) -> i32
+    get_or_declare("fseek",
+        llvm::FunctionType::get(i32_type(),
+            {ptr_type(), i64_type(), i32_type()}, false));
+    // ftell(ptr stream) -> i64
+    get_or_declare("ftell",
+        llvm::FunctionType::get(i64_type(), {ptr_type()}, false));
+    // exit(i32 code) -> void
+    get_or_declare("exit",
+        llvm::FunctionType::get(void_type(), {i32_type()}, false));
 }
 
 llvm::Function* CodeGen::get_or_declare(const std::string& name,
@@ -892,6 +939,137 @@ llvm::Value* CodeGen::gen_expr(const Expression* e) {
         }
         if (call_expr->callee == "ptr_to_number" || call_expr->callee == "number_to_ptr")
             return gen_expr(call_expr->args[0].get());
+
+        // ── String built-ins ──────────────────────────────────────────────────
+
+        if (call_expr->callee == "char_code") {
+            auto* str_ptr = gen_expr(call_expr->args[0].get());
+            auto* ch      = builder->CreateLoad(i8_type(), str_ptr, "char");
+            auto* as_i64  = builder->CreateZExt(ch, i64_type(), "char_i64");
+            return builder->CreateSIToFP(as_i64, double_type(), "char_f64");
+        }
+
+        if (call_expr->callee == "char_from_code") {
+            auto* code             = gen_expr(call_expr->args[0].get());
+            auto* current_function = builder->GetInsertBlock()->getParent();
+            auto* buf              = alloca_at_entry(current_function,
+                llvm::ArrayType::get(i8_type(), 2), "char_buf");
+            auto* ch_i64  = builder->CreateFPToSI(code, i64_type(), "code_i64");
+            auto* ch_i8   = builder->CreateTrunc(ch_i64, i8_type(), "char_i8");
+            auto* slot0   = builder->CreateGEP(i8_type(), buf,
+                {llvm::ConstantInt::get(i64_type(), 0)});
+            auto* slot1   = builder->CreateGEP(i8_type(), buf,
+                {llvm::ConstantInt::get(i64_type(), 1)});
+            builder->CreateStore(ch_i8, slot0);
+            builder->CreateStore(llvm::ConstantInt::get(i8_type(), 0), slot1);
+            return buf;
+        }
+
+        if (call_expr->callee == "substring") {
+            auto* src     = gen_expr(call_expr->args[0].get());
+            auto* start_f = gen_expr(call_expr->args[1].get());
+            auto* len_f   = gen_expr(call_expr->args[2].get());
+            auto* start_i = builder->CreateFPToSI(start_f, i64_type(), "sub_start");
+            auto* len_i   = builder->CreateFPToSI(len_f,   i64_type(), "sub_len");
+            auto* src_off = builder->CreateGEP(i8_type(), src, {start_i}, "src_off");
+            auto* buf_sz  = builder->CreateAdd(len_i,
+                llvm::ConstantInt::get(i64_type(), 1), "sub_bufsz");
+            auto* malloc_fn  = module->getFunction("malloc");
+            auto* buf        = builder->CreateCall(malloc_fn->getFunctionType(),
+                malloc_fn, {buf_sz}, "sub_buf");
+            auto* strncpy_fn = module->getFunction("strncpy");
+            builder->CreateCall(strncpy_fn->getFunctionType(), strncpy_fn,
+                {buf, src_off, len_i});
+            auto* null_pos = builder->CreateGEP(i8_type(), buf, {len_i}, "sub_end");
+            builder->CreateStore(llvm::ConstantInt::get(i8_type(), 0), null_pos);
+            return buf;
+        }
+
+        if (call_expr->callee == "string_contains") {
+            auto* hay       = gen_expr(call_expr->args[0].get());
+            auto* ndl       = gen_expr(call_expr->args[1].get());
+            auto* strstr_fn = module->getFunction("strstr");
+            auto* result    = builder->CreateCall(strstr_fn->getFunctionType(),
+                strstr_fn, {hay, ndl}, "strstr_r");
+            auto* null_val  = llvm::Constant::getNullValue(ptr_type());
+            return builder->CreateICmpNE(result, null_val, "contains");
+        }
+
+        // ── File I/O ──────────────────────────────────────────────────────────
+
+        if (call_expr->callee == "read_file") {
+            auto* path     = gen_expr(call_expr->args[0].get());
+            auto* fopen_fn = module->getFunction("fopen");
+            auto* mode_r   = builder->CreateGlobalStringPtr("r", ".mode_r");
+            auto* fp       = builder->CreateCall(fopen_fn->getFunctionType(),
+                fopen_fn, {path, mode_r}, "fp");
+            auto* fseek_fn  = module->getFunction("fseek");
+            auto* ftell_fn  = module->getFunction("ftell");
+            builder->CreateCall(fseek_fn->getFunctionType(), fseek_fn,
+                {fp, llvm::ConstantInt::get(i64_type(), 0),
+                 llvm::ConstantInt::get(i32_type(), 2)});
+            auto* file_size = builder->CreateCall(ftell_fn->getFunctionType(),
+                ftell_fn, {fp}, "fsize");
+            builder->CreateCall(fseek_fn->getFunctionType(), fseek_fn,
+                {fp, llvm::ConstantInt::get(i64_type(), 0),
+                 llvm::ConstantInt::get(i32_type(), 0)});
+            auto* malloc_fn = module->getFunction("malloc");
+            auto* buf_size  = builder->CreateAdd(file_size,
+                llvm::ConstantInt::get(i64_type(), 1), "buf_sz");
+            auto* buf       = builder->CreateCall(malloc_fn->getFunctionType(),
+                malloc_fn, {buf_size}, "file_buf");
+            auto* fread_fn  = module->getFunction("fread");
+            builder->CreateCall(fread_fn->getFunctionType(), fread_fn,
+                {buf, llvm::ConstantInt::get(i64_type(), 1), file_size, fp});
+            auto* end_ptr   = builder->CreateGEP(i8_type(), buf, {file_size}, "file_end");
+            builder->CreateStore(llvm::ConstantInt::get(i8_type(), 0), end_ptr);
+            auto* fclose_fn = module->getFunction("fclose");
+            builder->CreateCall(fclose_fn->getFunctionType(), fclose_fn, {fp});
+            return buf;
+        }
+
+        if (call_expr->callee == "write_file") {
+            auto* path     = gen_expr(call_expr->args[0].get());
+            auto* content  = gen_expr(call_expr->args[1].get());
+            auto* fopen_fn = module->getFunction("fopen");
+            auto* mode_w   = builder->CreateGlobalStringPtr("w", ".mode_w");
+            auto* fp       = builder->CreateCall(fopen_fn->getFunctionType(),
+                fopen_fn, {path, mode_w}, "fp");
+            auto* fputs_fn  = module->getFunction("fputs");
+            builder->CreateCall(fputs_fn->getFunctionType(), fputs_fn, {content, fp});
+            auto* fclose_fn = module->getFunction("fclose");
+            builder->CreateCall(fclose_fn->getFunctionType(), fclose_fn, {fp});
+            return llvm::ConstantFP::get(double_type(), 0.0);
+        }
+
+        // ── Process arguments ─────────────────────────────────────────────────
+
+        if (call_expr->callee == "args_count") {
+            auto* argc_g = module->getNamedGlobal("__sprig_argc");
+            auto* argc   = builder->CreateLoad(i32_type(), argc_g, "argc");
+            return builder->CreateSIToFP(argc, double_type(), "argc_f64");
+        }
+
+        if (call_expr->callee == "args_get") {
+            auto* idx_f   = gen_expr(call_expr->args[0].get());
+            auto* idx_i   = builder->CreateFPToSI(idx_f, i64_type(), "arg_idx");
+            auto* argv_g  = module->getNamedGlobal("__sprig_argv");
+            auto* argv    = builder->CreateLoad(ptr_type(), argv_g, "argv");
+            auto* arg_ptr = builder->CreateGEP(ptr_type(), argv, {idx_i}, "arg_ptr");
+            return builder->CreateLoad(ptr_type(), arg_ptr, "arg");
+        }
+
+        if (call_expr->callee == "exit") {
+            auto* code_f   = gen_expr(call_expr->args[0].get());
+            auto* code_i   = builder->CreateFPToSI(code_f, i32_type(), "exit_code");
+            auto* exit_fn  = module->getFunction("exit");
+            builder->CreateCall(exit_fn->getFunctionType(), exit_fn, {code_i});
+            builder->CreateUnreachable();
+            auto* current_function = builder->GetInsertBlock()->getParent();
+            auto* dead = llvm::BasicBlock::Create(context, "dead", current_function);
+            builder->SetInsertPoint(dead);
+            return llvm::ConstantFP::get(double_type(), 0.0);
+        }
 
         // User-defined function
         auto function_it = functions.find(call_expr->callee);
