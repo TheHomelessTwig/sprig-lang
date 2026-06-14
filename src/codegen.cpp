@@ -852,6 +852,24 @@ llvm::Value* CodeGen::gen_expr(const Expression* e) {
             return decode_from_list(raw_element, element_type);
         }
 
+        if (call_expr->callee == "pop") {
+            auto* list_ptr    = gen_expr(call_expr->args[0].get());
+            TypePtr list_type = expr_type(call_expr->args[0].get());
+            TypePtr elem_type = (list_type && list_type->kind == Type::Kind::List)
+                                    ? list_type->element_type : nullptr;
+            auto* list_struct = get_list_struct();
+            auto* len_ptr     = builder->CreateStructGEP(list_struct, list_ptr, 0, "len_ptr");
+            auto* len         = builder->CreateLoad(i64_type(), len_ptr, "len");
+            auto* new_len     = builder->CreateSub(len,
+                llvm::ConstantInt::get(i64_type(), 1), "new_len");
+            builder->CreateStore(new_len, len_ptr);
+            auto* dat_ptr  = builder->CreateStructGEP(list_struct, list_ptr, 2, "dat_ptr");
+            auto* data     = builder->CreateLoad(ptr_type(), dat_ptr, "data");
+            auto* elem_ptr = builder->CreateGEP(i64_type(), data, {new_len}, "pop_elem");
+            auto* raw      = builder->CreateLoad(i64_type(), elem_ptr, "pop_raw");
+            return decode_from_list(raw, elem_type);
+        }
+
         if (call_expr->callee == "input") {
             auto* current_function = builder->GetInsertBlock()->getParent();
             auto* buf_type         = llvm::ArrayType::get(i8_type(), 1024);

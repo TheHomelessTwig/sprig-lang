@@ -194,10 +194,7 @@ StatementPointer Parser::field_assign_statement() {
 StatementPointer Parser::include_statement() {
     Token path_tok = expect(TokenType::STRING, "Expected file path after 'include'");
     match(TokenType::NEWLINE);
-    // Strip surrounding quotes
-    std::string raw  = path_tok.lexeme;
-    std::string path = raw.substr(1, raw.size() - 2);
-    return std::make_unique<IncludeStatement>(path, path_tok.line);
+    return std::make_unique<IncludeStatement>(path_tok.lexeme, path_tok.line);
 }
 
 // when cond: ... [otherwise: ...]
@@ -385,11 +382,8 @@ ExpressionPointer Parser::primary() {
     if (match(TokenType::NUMBER))
         return std::make_unique<NumberExpression>(std::stod(previous().lexeme));
 
-    if (match(TokenType::STRING)) {
-        std::string raw = previous().lexeme;
-        // Strip surrounding quotes
-        return std::make_unique<StringExpression>(raw.substr(1, raw.size() - 2));
-    }
+    if (match(TokenType::STRING))
+        return std::make_unique<StringExpression>(previous().lexeme);
 
     if (match(TokenType::TRUE))    return std::make_unique<BoolExpression>(true);
     if (match(TokenType::FALSE))   return std::make_unique<BoolExpression>(false);

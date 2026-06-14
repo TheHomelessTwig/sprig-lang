@@ -38,6 +38,7 @@ std::vector<TypeError> TypeChecker::check(const Program& program,
     bind("append",    Type::make_function({fresh(), fresh()},   Type::make_nothing()));
     bind("first",     Type::make_function({fresh()},            fresh()));
     bind("last",      Type::make_function({fresh()},            fresh()));
+    bind("pop",       Type::make_function({Type::make_list(fresh())}, fresh()));
     bind("to_number", Type::make_function({Type::make_text()},  Type::make_number()));
     bind("to_text",   Type::make_function({fresh()},            Type::make_text()));
     bind("char_code",      Type::make_function({Type::make_text()},                              Type::make_number()));

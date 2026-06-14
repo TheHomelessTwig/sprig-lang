@@ -204,15 +204,31 @@ void Lexer::scan_token(std::vector<Token>& tokens) {
 }
 
 void Lexer::scan_string(std::vector<Token>& tokens) {
+    std::string processed;
     while (peek() != '"' && !at_end()) {
-        if (peek() == '\n') { line++; col = 0; }
-        advance();
+        if (peek() == '\n') { line++; col = 0; advance(); continue; }
+        if (peek() == '\\') {
+            advance();
+            if (at_end()) break;
+            char esc = advance();
+            switch (esc) {
+                case 'n':  processed += '\n'; break;
+                case 't':  processed += '\t'; break;
+                case 'r':  processed += '\r'; break;
+                case '\\': processed += '\\'; break;
+                case '"':  processed += '"';  break;
+                case '0':  processed += '\0'; break;
+                default:   processed += esc;  break;
+            }
+        } else {
+            processed += advance();
+        }
     }
     if (at_end())
         throw std::runtime_error("Unterminated string at line " +
                                  std::to_string(line));
     advance(); // closing "
-    add(tokens, TokenType::STRING);
+    tokens.emplace_back(TokenType::STRING, processed, line, start_col);
 }
 
 void Lexer::scan_number(std::vector<Token>& tokens) {

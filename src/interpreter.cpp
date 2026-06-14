@@ -511,6 +511,17 @@ Value Interpreter::eval_expression(const Expression* e, Environment& env) {
             return val.list->back();
         }
 
+        if (call_expr->callee == "pop") {
+            if (call_expr->args.size() != 1)
+                throw std::runtime_error("pop() takes 1 argument");
+            Value list_val = eval_expression(call_expr->args[0].get(), env);
+            if (list_val.kind != Value::Kind::List || list_val.list->empty())
+                throw std::runtime_error("pop() requires a non-empty list");
+            Value last_val = list_val.list->back();
+            list_val.list->pop_back();
+            return last_val;
+        }
+
         if (call_expr->callee == "input") {
             if (call_expr->args.size() > 1)
                 throw std::runtime_error("input() takes 0 or 1 arguments");
