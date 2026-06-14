@@ -2,7 +2,7 @@
 
 A toy programming language with a custom syntax. Written in C++17.
 
-Implements a lexer, recursive-descent parser, and tree-walk interpreter. Indentation-based — no braces or semicolons.
+Implements a lexer, recursive-descent parser, and tree-walk interpreter. Indentation-based — minimal braces and semicolons.
 
 ## Syntax
 
