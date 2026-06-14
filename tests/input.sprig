@@ -1,0 +1,20 @@
+print("")
+// Basic input
+let name = input("What is your name? ")
+print("Hello, " + name)
+
+// Numeric input
+let raw = input("Enter a number: ")
+let num = to_number(raw)
+let doubled = num * 2
+print("Doubled: " + to_text(doubled))
+
+// Simple guessing game
+let secret = 7
+let guess = to_number(input("Guess the number: "))
+when guess is secret:
+    print("Correct!")
+otherwise when guess < secret:
+    print("Too low")
+otherwise:
+    print("Too high")

@@ -1,0 +1,19 @@
+print("")
+let magic_number = 7
+
+define guessing_game(magic_number):
+    let guesses = 0
+    as long as true:
+        let guess = to_number(input("Please pick a number between 1 and 10: "))
+        let guesses = guesses + 1
+        when guess > magic_number:
+            print("Too high, guess again!")
+        otherwise when guess < magic_number:
+            print("Too low, guess again!")
+        otherwise:
+            print("Correct! You got it in " + to_text(guesses) + " guesses")
+            stop
+
+let name = input("Please enter your name: ")
+print("Hello " + name)
+guessing_game(magic_number)
