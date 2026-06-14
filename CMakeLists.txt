@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.19...3.26) # 3.19 required for modern Apple Silicon universal features
 
 # Define the project and enable C++ support
-project(TWIG-LANG 
-    VERSION 1.0.0 
+project(SPRIG-LANG
+    VERSION 1.0.0
     LANGUAGES CXX
 )
 
