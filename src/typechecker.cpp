@@ -225,6 +225,13 @@ TypePtr TypeChecker::infer_expression(const Expression* e) {
     if (auto* i = dynamic_cast<const IdentExpression*>(e))
         return lookup(i->name, i->line);
 
+    // ── Borrow expressions ────────────────────────────────────────────────────
+
+    if (auto* be = dynamic_cast<const BorrowExpression*>(e))
+        return lookup(be->source, be->line);
+    if (auto* mbe = dynamic_cast<const MutableBorrowExpression*>(e))
+        return lookup(mbe->source, mbe->line);
+
     // ── Unary ─────────────────────────────────────────────────────────────────
 
     if (auto* u = dynamic_cast<const UnaryExpression*>(e)) {
@@ -368,6 +375,16 @@ void TypeChecker::check_statement(const Statement* s, TypePtr return_type) {
     // let [mutable] x = expr
     if (auto* vs = dynamic_cast<const VariableStatement*>(s)) {
         bind(vs->name, infer_expression(vs->value.get()));
+        return;
+    }
+
+    // let x borrow [mutable] y — target gets same type as source
+    if (auto* bs = dynamic_cast<const BorrowStatement*>(s)) {
+        bind(bs->target, lookup(bs->source, bs->line));
+        return;
+    }
+    if (auto* mbs = dynamic_cast<const MutableBorrowStatement*>(s)) {
+        bind(mbs->target, lookup(mbs->source, mbs->line));
         return;
     }
 

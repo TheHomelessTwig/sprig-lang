@@ -27,6 +27,7 @@ private:
 
     StatementPointer statement();
     StatementPointer variable_statement();
+    StatementPointer borrow_statement();
     StatementPointer function_statement();
     StatementPointer shape_definition_statement();
     StatementPointer field_assign_statement();

@@ -14,6 +14,7 @@ enum class TokenType {
     DEFINE,
     SHAPE,
     MUTABLE,
+    BORROW,
     INCLUDE,
 
     // Control flow keywords
@@ -127,6 +128,7 @@ inline std::string token_type_name(TokenType t) {
         case TokenType::DEFINE:  return "DEFINE";
         case TokenType::SHAPE:   return "SHAPE";
         case TokenType::MUTABLE: return "MUTABLE";
+        case TokenType::BORROW:  return "BORROW";
         case TokenType::INCLUDE: return "INCLUDE";
 
         // Control flow keywords

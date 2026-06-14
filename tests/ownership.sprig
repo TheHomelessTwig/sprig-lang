@@ -1,0 +1,43 @@
+// ── Basic ownership ───────────────────────────────────────────────────────────
+let names = ["sam", "alex"]
+print(names)
+
+// ── Immutable borrow ──────────────────────────────────────────────────────────
+let mutable data = [1, 2, 3]
+let view borrow data
+print(view)         // fine — reading through borrow
+print(data)         // fine — data is borrowed, not mutably borrowed
+
+// ── Mutable borrow ────────────────────────────────────────────────────────────
+let mutable items = [10, 20, 30]
+let editor borrow mutable items
+append(editor, 40)  // fine — editor has write access through shared list ptr
+print(editor)       // [10, 20, 30, 40] — read through the borrow reference
+// print(items)     // BLOCKED: cannot read items while mutably borrowed
+
+// ── Borrow as function argument ───────────────────────────────────────────────
+define describe(items):
+    print(length(items))
+    give back first(items)
+
+let numbers = [10, 20, 30]
+let got = describe(borrow numbers)
+print(got)          // 10 — first element
+print(numbers)      // fine — numbers still accessible after borrow
+
+// ── Borrow errors (uncomment one at a time to test) ───────────────────────────
+
+// Borrow while mutably borrowed:
+// let mutable x = [1, 2]
+// let writer borrow mutable x
+// let reader borrow x   // ERROR: cannot borrow 'x' while it is mutably borrowed
+
+// Double mutable borrow:
+// let mutable y = [1, 2]
+// let w1 borrow mutable y
+// let w2 borrow mutable y  // ERROR: cannot mutably borrow 'y' — already mutably borrowed
+
+// Mutable borrow while immutably borrowed:
+// let mutable z = [1, 2]
+// let r borrow z
+// let w borrow mutable z   // ERROR: cannot mutably borrow 'z' while it is borrowed

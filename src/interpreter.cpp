@@ -94,6 +94,17 @@ void Interpreter::eval_statement(const Statement* s, Environment& env) {
         return;
     }
 
+    // let x borrow [mutable] y — alias: binds target to source's current value
+    // Lists and shapes use shared_ptr so mutations are visible through the alias.
+    if (auto* bs = dynamic_cast<const BorrowStatement*>(s)) {
+        env.declare(bs->target, env.get(bs->source), false);
+        return;
+    }
+    if (auto* mbs = dynamic_cast<const MutableBorrowStatement*>(s)) {
+        env.declare(mbs->target, env.get(mbs->source), false);
+        return;
+    }
+
     // define name(params): body  — register without executing
     if (auto* fs = dynamic_cast<const FunctionStatement*>(s)) {
         functions[fs->name] = SprigFunction{fs->params, &fs->body};
@@ -259,7 +270,13 @@ Value Interpreter::eval_expression(const Expression* e, Environment& env) {
     if (dynamic_cast<const NothingExpression*>(e))
         return Value::make_nil();
 
-    // ── Variable lookup ───────────────────────────────────────────────────────
+    // ── Variable lookup / borrow expressions ─────────────────────────────────
+
+    // borrow [mutable] x — at runtime just produces the value of x
+    if (auto* be = dynamic_cast<const BorrowExpression*>(e))
+        return env.get(be->source);
+    if (auto* mbe = dynamic_cast<const MutableBorrowExpression*>(e))
+        return env.get(mbe->source);
 
     if (auto* i = dynamic_cast<const IdentExpression*>(e)) {
         try {

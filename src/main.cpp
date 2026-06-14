@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "borrowchecker.hpp"
 #include "interpreter.hpp"
 #include "lexer.hpp"
 #include "parser.hpp"
@@ -64,6 +65,15 @@ int main(int argc, char* argv[]) {
                 }
                 std::cerr << err.message << "\n";
             }
+            return 1;
+        }
+
+        // ── Borrow checking pass ──────────────────────────────────────────────
+        BorrowChecker borrow_checker;
+        auto borrow_errors = borrow_checker.check(program, source);
+        if (!borrow_errors.empty()) {
+            for (auto& err : borrow_errors)
+                std::cerr << err.message << "\n";
             return 1;
         }
 

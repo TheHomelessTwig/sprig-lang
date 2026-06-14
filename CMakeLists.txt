@@ -70,10 +70,20 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
-# 5. EXTERNAL LIBRARIES (Optional Example)
+# 5. EXTERNAL LIBRARIES
 # ---------------------------------------------------------------------------
-# find_package(Threads REQUIRED)
-# target_link_libraries(${PROJECT_NAME} PRIVATE Threads::Threads)
+find_package(LLVM REQUIRED CONFIG)
+message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
+
+include_directories(${LLVM_INCLUDE_DIRS})
+add_definitions(${LLVM_DEFINITIONS})
+
+llvm_map_components_to_libnames(LLVM_LIBS
+    core support irreader
+    x86codegen x86asmparser
+)
+
+target_link_libraries(${PROJECT_NAME} PRIVATE ${LLVM_LIBS})
 
 # ---------------------------------------------------------------------------
 # 6. INSTALLATION RULES

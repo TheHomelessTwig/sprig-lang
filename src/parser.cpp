@@ -91,8 +91,13 @@ StatementPointer Parser::statement() {
     return expression_statement();
 }
 
-// let [mutable] x = expr
+// let [mutable] x = expr  /  let x borrow [mutable] y
 StatementPointer Parser::variable_statement() {
+    // let x borrow [mutable] y
+    if (check(TokenType::IDENTIFIER) &&
+        peek_at(1).type == TokenType::BORROW)
+        return borrow_statement();
+
     bool  is_mutable = match(TokenType::MUTABLE);
     Token name       = expect(TokenType::IDENTIFIER, "Expected name after 'let'");
     expect(TokenType::ASSIGN, "Expected '='");
@@ -100,6 +105,24 @@ StatementPointer Parser::variable_statement() {
     match(TokenType::NEWLINE);
     return std::make_unique<VariableStatement>(
         name.lexeme, std::move(val), is_mutable, name.line);
+}
+
+// let x borrow [mutable] y
+StatementPointer Parser::borrow_statement() {
+    Token target = advance();                        // x
+    expect(TokenType::BORROW, "Expected 'borrow'"); // borrow
+    if (match(TokenType::MUTABLE)) {
+        Token source = expect(TokenType::IDENTIFIER,
+                              "Expected variable to borrow");
+        match(TokenType::NEWLINE);
+        return std::make_unique<MutableBorrowStatement>(
+            target.lexeme, source.lexeme, target.line);
+    }
+    Token source = expect(TokenType::IDENTIFIER,
+                          "Expected variable to borrow");
+    match(TokenType::NEWLINE);
+    return std::make_unique<BorrowStatement>(
+        target.lexeme, source.lexeme, target.line);
 }
 
 // define name(params): body
@@ -382,6 +405,20 @@ ExpressionPointer Parser::primary() {
         expect(TokenType::RBRACE, "Expected '}'");
         return std::make_unique<ShapeInstanceExpression>(
             name.lexeme, std::move(fields));
+    }
+
+    // borrow [mutable] x  — used in function arguments and expressions
+    if (match(TokenType::BORROW)) {
+        int borrow_line = previous().line;
+        if (match(TokenType::MUTABLE)) {
+            Token source = expect(TokenType::IDENTIFIER,
+                                  "Expected variable name after 'borrow mutable'");
+            return std::make_unique<MutableBorrowExpression>(
+                source.lexeme, borrow_line);
+        }
+        Token source = expect(TokenType::IDENTIFIER,
+                              "Expected variable name after 'borrow'");
+        return std::make_unique<BorrowExpression>(source.lexeme, borrow_line);
     }
 
     // Regular identifier — must come AFTER shape instantiation check

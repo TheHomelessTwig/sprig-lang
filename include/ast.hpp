@@ -204,6 +204,40 @@ struct IncludeStatement : Statement {
         : path(std::move(p)), line(ln) {}
 };
 
+// let x borrow y  — immutable borrow binding
+struct BorrowStatement : Statement {
+    std::string target;
+    std::string source;
+    int         line;
+    BorrowStatement(std::string t, std::string s, int ln)
+        : target(std::move(t)), source(std::move(s)), line(ln) {}
+};
+
+// let x borrow mutable y  — mutable borrow binding
+struct MutableBorrowStatement : Statement {
+    std::string target;
+    std::string source;
+    int         line;
+    MutableBorrowStatement(std::string t, std::string s, int ln)
+        : target(std::move(t)), source(std::move(s)), line(ln) {}
+};
+
+// borrow x  — immutable borrow expression (for function arguments)
+struct BorrowExpression : Expression {
+    std::string source;
+    int         line;
+    BorrowExpression(std::string s, int ln)
+        : source(std::move(s)), line(ln) {}
+};
+
+// borrow mutable x  — mutable borrow expression
+struct MutableBorrowExpression : Expression {
+    std::string source;
+    int         line;
+    MutableBorrowExpression(std::string s, int ln)
+        : source(std::move(s)), line(ln) {}
+};
+
 // ── Program root ──────────────────────────────────────────────────────────────
 
 struct Program {
