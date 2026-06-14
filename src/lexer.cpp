@@ -26,6 +26,8 @@ static const std::unordered_map<std::string, TokenType> KEYWORDS = {
     {"include",   TokenType::INCLUDE},
     {"mutable",   TokenType::MUTABLE},
     {"borrow",    TokenType::BORROW},
+    {"own",       TokenType::OWN},
+    {"unsafe",    TokenType::UNSAFE},
     {"text",      TokenType::TYPE_TEXT},
     {"number",    TokenType::TYPE_NUMBER},
     {"decimal",   TokenType::TYPE_DECIMAL},

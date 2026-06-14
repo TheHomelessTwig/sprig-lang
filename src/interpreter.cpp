@@ -1,6 +1,8 @@
 #include "interpreter.hpp"
 
 #include <cmath>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -18,6 +20,8 @@ static bool value_matches_type(const Value& v, const std::string& type) {
     if (type == "number")  return v.kind == Value::Kind::Number;
     if (type == "decimal") return v.kind == Value::Kind::Number;
     if (type == "flag")    return v.kind == Value::Kind::Bool;
+    if (type.substr(0, 4) == "own ") return v.kind == Value::Kind::Shape ||
+                                             v.kind == Value::Kind::Nil;
     return true; // unknown type — pass through
 }
 
@@ -40,9 +44,9 @@ void Interpreter::run(const Program& program, const std::string& source,
                       const std::string& file_path) {
     // Split source into lines so make_error() can show the offending line.
     std::istringstream stream(source);
-    std::string        ln;
-    while (std::getline(stream, ln))
-        source_lines.push_back(ln);
+    std::string        line_text;
+    while (std::getline(stream, line_text))
+        source_lines.push_back(line_text);
 
     if (!file_path.empty()) {
         base_path = std::filesystem::path(file_path).parent_path().string();
@@ -84,73 +88,73 @@ void Interpreter::eval_block(const Block& b, Environment& env) {
 void Interpreter::eval_statement(const Statement* s, Environment& env) {
 
     // let [mutable] x = expr
-    if (auto* vs = dynamic_cast<const VariableStatement*>(s)) {
-        Value val = eval_expression(vs->value.get(), env);
+    if (auto* variable_stmt = dynamic_cast<const VariableStatement*>(s)) {
+        Value new_value = eval_expression(variable_stmt->value.get(), env);
         try {
-            env.declare(vs->name, std::move(val), vs->is_mutable);
+            env.declare(variable_stmt->name, std::move(new_value), variable_stmt->is_mutable);
         } catch (std::runtime_error& err) {
-            throw std::runtime_error(make_error(err.what(), vs->line));
+            throw std::runtime_error(make_error(err.what(), variable_stmt->line));
         }
         return;
     }
 
     // let x borrow [mutable] y — alias: binds target to source's current value
     // Lists and shapes use shared_ptr so mutations are visible through the alias.
-    if (auto* bs = dynamic_cast<const BorrowStatement*>(s)) {
-        env.declare(bs->target, env.get(bs->source), false);
+    if (auto* borrow_stmt = dynamic_cast<const BorrowStatement*>(s)) {
+        env.declare(borrow_stmt->target, env.get(borrow_stmt->source), false);
         return;
     }
-    if (auto* mbs = dynamic_cast<const MutableBorrowStatement*>(s)) {
-        env.declare(mbs->target, env.get(mbs->source), false);
+    if (auto* mutable_borrow_stmt = dynamic_cast<const MutableBorrowStatement*>(s)) {
+        env.declare(mutable_borrow_stmt->target, env.get(mutable_borrow_stmt->source), false);
         return;
     }
 
     // define name(params): body  — register without executing
-    if (auto* fs = dynamic_cast<const FunctionStatement*>(s)) {
-        functions[fs->name] = SprigFunction{fs->params, &fs->body};
+    if (auto* function_stmt = dynamic_cast<const FunctionStatement*>(s)) {
+        functions[function_stmt->name] = SprigFunction{function_stmt->params, &function_stmt->body};
         return;
     }
 
     // shape Person:  — register field schema
-    if (auto* sd = dynamic_cast<const ShapeDefinitionStatement*>(s)) {
-        shapes[sd->name] = SprigShapeDefinition{sd->fields};
+    if (auto* shape_definition = dynamic_cast<const ShapeDefinitionStatement*>(s)) {
+        shapes[shape_definition->name] = SprigShapeDefinition{shape_definition->fields};
         return;
     }
 
     // sam.age = 21  — mutate through shared_ptr + enforce declared type
-    if (auto* fa = dynamic_cast<const FieldAssignStatement*>(s)) {
-        Value obj = env.get(fa->variable);
+    if (auto* field_assign = dynamic_cast<const FieldAssignStatement*>(s)) {
+        Value obj = env.get(field_assign->variable);
         if (obj.kind != Value::Kind::Shape)
             throw std::runtime_error(make_error(
-                "'" + fa->variable + "' is not a shape", fa->line));
+                "'" + field_assign->variable + "' is not a shape", field_assign->line));
 
-        auto schema_it = shapes.find(obj.shape_type);
-        if (schema_it == shapes.end())
+        auto shape_it = shapes.find(obj.shape_type);
+        if (shape_it == shapes.end())
             throw std::runtime_error(make_error(
-                "Unknown shape type '" + obj.shape_type + "'", fa->line));
+                "Unknown shape type '" + obj.shape_type + "'", field_assign->line));
 
         // Find declared type for this field
         const ShapeField* field_def = nullptr;
-        for (auto& f : schema_it->second.fields)
-            if (f.name == fa->field) { field_def = &f; break; }
+        for (auto& f : shape_it->second.fields)
+            if (f.name == field_assign->field) { field_def = &f; break; }
         if (!field_def)
             throw std::runtime_error(make_error(
                 "Shape '" + obj.shape_type +
-                "' has no field '" + fa->field + "'", fa->line));
+                "' has no field '" + field_assign->field + "'", field_assign->line));
 
-        Value new_val = eval_expression(fa->value.get(), env);
+        Value new_val = eval_expression(field_assign->value.get(), env);
         if (!value_matches_type(new_val, field_def->type))
             throw std::runtime_error(make_error(
-                "Field '" + fa->field + "' expects " + field_def->type +
-                " but got " + type_name_of(new_val), fa->line));
+                "Field '" + field_assign->field + "' expects " + field_def->type +
+                " but got " + type_name_of(new_val), field_assign->line));
 
-        (*obj.shape)[fa->field] = std::move(new_val);
+        (*obj.shape)[field_assign->field] = std::move(new_val);
         return;
     }
 
     // include "path/to/file.sprig"  — lex, parse, run in current context
-    if (auto* inc = dynamic_cast<const IncludeStatement*>(s)) {
-        std::string path = inc->path;
+    if (auto* include_stmt = dynamic_cast<const IncludeStatement*>(s)) {
+        std::string path = include_stmt->path;
 
         // Resolve relative to the including file's directory
         if (!base_path.empty() && !path.empty() && path[0] != '/')
@@ -169,17 +173,17 @@ void Interpreter::eval_statement(const Statement* s, Environment& env) {
         std::ifstream file(path);
         if (!file)
             throw std::runtime_error(make_error(
-                "Cannot open include file '" + path + "'", inc->line));
+                "Cannot open include file '" + path + "'", include_stmt->line));
 
-        std::stringstream buf;
-        buf << file.rdbuf();
-        std::string src = buf.str();
+        std::stringstream file_content;
+        file_content << file.rdbuf();
+        std::string file_source = file_content.str();
 
-        Lexer   lex(src);
-        Parser  par(lex.tokenize());
+        Lexer  file_lexer(file_source);
+        Parser file_parser(file_lexer.tokenize());
         // Store the program in owned_programs before running — SprigFunction holds raw
-        // pointers into the AST (&fs->body), so the Program must outlive the interpreter.
-        owned_programs.push_back(par.parse());
+        // pointers into the AST (&function_stmt->body), so the Program must outlive the interpreter.
+        owned_programs.push_back(file_parser.parse());
         Program& prog = owned_programs.back();
         for (auto& stmt : prog.stmts)
             eval_statement(stmt.get(), global);
@@ -187,24 +191,24 @@ void Interpreter::eval_statement(const Statement* s, Environment& env) {
     }
 
     // when cond: ...
-    if (auto* is = dynamic_cast<const IfStatement*>(s)) {
-        Value cond = eval_expression(is->condition.get(), env);
-        if (cond.is_truthy()) {
+    if (auto* if_stmt = dynamic_cast<const IfStatement*>(s)) {
+        Value condition = eval_expression(if_stmt->condition.get(), env);
+        if (condition.is_truthy()) {
             Environment inner(&env);
-            eval_block(is->then_block, inner);
-        } else if (is->else_block) {
+            eval_block(if_stmt->then_block, inner);
+        } else if (if_stmt->else_block) {
             Environment inner(&env);
-            eval_block(*is->else_block, inner);
+            eval_block(*if_stmt->else_block, inner);
         }
         return;
     }
 
     // as long as cond: ...
-    if (auto* ws = dynamic_cast<const WhileStatement*>(s)) {
-        while (eval_expression(ws->condition.get(), env).is_truthy()) {
+    if (auto* while_stmt = dynamic_cast<const WhileStatement*>(s)) {
+        while (eval_expression(while_stmt->condition.get(), env).is_truthy()) {
             Environment inner(&env);
             try {
-                eval_block(ws->body, inner);
+                eval_block(while_stmt->body, inner);
             } catch (StopSignal&) {
                 break;
             } catch (SkipSignal&) {
@@ -215,16 +219,16 @@ void Interpreter::eval_statement(const Statement* s, Environment& env) {
     }
 
     // for each x in list: ...
-    if (auto* fe = dynamic_cast<const ForEachStatement*>(s)) {
-        Value iterable = eval_expression(fe->iterable.get(), env);
+    if (auto* for_each_stmt = dynamic_cast<const ForEachStatement*>(s)) {
+        Value iterable = eval_expression(for_each_stmt->iterable.get(), env);
         if (iterable.kind != Value::Kind::List)
             throw std::runtime_error("'for each' requires a list");
         for (auto& item : *iterable.list) {
             Environment inner(&env);
             // bind() ensures the loop variable is always local to this iteration
-            inner.bind(fe->variable, item, true);
+            inner.bind(for_each_stmt->variable, item, true);
             try {
-                eval_block(fe->body, inner);
+                eval_block(for_each_stmt->body, inner);
             } catch (StopSignal&) {
                 break;
             } catch (SkipSignal&) {
@@ -235,17 +239,24 @@ void Interpreter::eval_statement(const Statement* s, Environment& env) {
     }
 
     // give back expr — unwind via signal to call_function()
-    if (auto* rs = dynamic_cast<const ReturnStatement*>(s)) {
-        throw ReturnSignal{eval_expression(rs->value.get(), env)};
+    if (auto* return_stmt = dynamic_cast<const ReturnStatement*>(s)) {
+        throw ReturnSignal{eval_expression(return_stmt->value.get(), env)};
     }
 
     // stop / skip — unwind to the nearest enclosing loop
     if (dynamic_cast<const StopStatement*>(s)) throw StopSignal{};
     if (dynamic_cast<const SkipStatement*>(s)) throw SkipSignal{};
 
+    // unsafe: block — borrow checker already validated; run normally
+    if (auto* unsafe_stmt = dynamic_cast<const UnsafeStatement*>(s)) {
+        Environment inner(&env);
+        eval_block(unsafe_stmt->body, inner);
+        return;
+    }
+
     // Bare expression statement (e.g. a print() call)
-    if (auto* es = dynamic_cast<const ExpressionStatement*>(s)) {
-        eval_expression(es->expr.get(), env);
+    if (auto* expr_stmt = dynamic_cast<const ExpressionStatement*>(s)) {
+        eval_expression(expr_stmt->expr.get(), env);
         return;
     }
 
@@ -258,14 +269,14 @@ Value Interpreter::eval_expression(const Expression* e, Environment& env) {
 
     // ── Literals ──────────────────────────────────────────────────────────────
 
-    if (auto* n = dynamic_cast<const NumberExpression*>(e))
-        return Value::make_number(n->value);
+    if (auto* number_expr = dynamic_cast<const NumberExpression*>(e))
+        return Value::make_number(number_expr->value);
 
-    if (auto* s = dynamic_cast<const StringExpression*>(e))
-        return Value::make_string(s->value);
+    if (auto* string_expr = dynamic_cast<const StringExpression*>(e))
+        return Value::make_string(string_expr->value);
 
-    if (auto* b = dynamic_cast<const BoolExpression*>(e))
-        return Value::make_bool(b->value);
+    if (auto* bool_expr = dynamic_cast<const BoolExpression*>(e))
+        return Value::make_bool(bool_expr->value);
 
     if (dynamic_cast<const NothingExpression*>(e))
         return Value::make_nil();
@@ -273,67 +284,67 @@ Value Interpreter::eval_expression(const Expression* e, Environment& env) {
     // ── Variable lookup / borrow expressions ─────────────────────────────────
 
     // borrow [mutable] x — at runtime just produces the value of x
-    if (auto* be = dynamic_cast<const BorrowExpression*>(e))
-        return env.get(be->source);
-    if (auto* mbe = dynamic_cast<const MutableBorrowExpression*>(e))
-        return env.get(mbe->source);
+    if (auto* borrow_expr = dynamic_cast<const BorrowExpression*>(e))
+        return env.get(borrow_expr->source);
+    if (auto* mutable_borrow_expr = dynamic_cast<const MutableBorrowExpression*>(e))
+        return env.get(mutable_borrow_expr->source);
 
-    if (auto* i = dynamic_cast<const IdentExpression*>(e)) {
+    if (auto* ident_expr = dynamic_cast<const IdentExpression*>(e)) {
         try {
-            return env.get(i->name);
+            return env.get(ident_expr->name);
         } catch (std::runtime_error&) {
             throw std::runtime_error(make_error(
-                "Undefined variable '" + i->name + "'", i->line));
+                "Undefined variable '" + ident_expr->name + "'", ident_expr->line));
         }
     }
 
     // ── Unary ─────────────────────────────────────────────────────────────────
 
-    if (auto* u = dynamic_cast<const UnaryExpression*>(e)) {
-        Value operand = eval_expression(u->operand.get(), env);
-        if (u->op == "not") return Value::make_bool(!operand.is_truthy());
-        throw std::runtime_error("Unknown unary operator: " + u->op);
+    if (auto* unary_expr = dynamic_cast<const UnaryExpression*>(e)) {
+        Value operand = eval_expression(unary_expr->operand.get(), env);
+        if (unary_expr->op == "not") return Value::make_bool(!operand.is_truthy());
+        throw std::runtime_error("Unknown unary operator: " + unary_expr->op);
     }
 
     // ── Binary ────────────────────────────────────────────────────────────────
 
-    if (auto* bin = dynamic_cast<const BinaryExpression*>(e)) {
+    if (auto* binary_expr = dynamic_cast<const BinaryExpression*>(e)) {
         // Short-circuit logical ops must not force both sides
-        if (bin->op == "and") {
-            if (!eval_expression(bin->left.get(), env).is_truthy())
+        if (binary_expr->op == "and") {
+            if (!eval_expression(binary_expr->left.get(), env).is_truthy())
                 return Value::make_bool(false);
             return Value::make_bool(
-                eval_expression(bin->right.get(), env).is_truthy());
+                eval_expression(binary_expr->right.get(), env).is_truthy());
         }
-        if (bin->op == "or") {
-            if (eval_expression(bin->left.get(), env).is_truthy())
+        if (binary_expr->op == "or") {
+            if (eval_expression(binary_expr->left.get(), env).is_truthy())
                 return Value::make_bool(true);
             return Value::make_bool(
-                eval_expression(bin->right.get(), env).is_truthy());
+                eval_expression(binary_expr->right.get(), env).is_truthy());
         }
 
-        Value left  = eval_expression(bin->left.get(),  env);
-        Value right = eval_expression(bin->right.get(), env);
+        Value left  = eval_expression(binary_expr->left.get(),  env);
+        Value right = eval_expression(binary_expr->right.get(), env);
 
-        if (bin->op == "+") {
+        if (binary_expr->op == "+") {
             // String coercion: if either side is a string, concatenate
             if (left.kind  == Value::Kind::String ||
                 right.kind == Value::Kind::String)
                 return Value::make_string(left.to_string() + right.to_string());
             return Value::make_number(left.number + right.number);
         }
-        if (bin->op == "-") return Value::make_number(left.number - right.number);
-        if (bin->op == "*") return Value::make_number(left.number * right.number);
-        if (bin->op == "/") {
+        if (binary_expr->op == "-") return Value::make_number(left.number - right.number);
+        if (binary_expr->op == "*") return Value::make_number(left.number * right.number);
+        if (binary_expr->op == "/") {
             if (right.number == 0)
                 throw std::runtime_error(
-                    make_error("Division by zero", bin->line));
+                    make_error("Division by zero", binary_expr->line));
             return Value::make_number(left.number / right.number);
         }
-        if (bin->op == ">") return Value::make_bool(left.number > right.number);
-        if (bin->op == "<") return Value::make_bool(left.number < right.number);
+        if (binary_expr->op == ">") return Value::make_bool(left.number > right.number);
+        if (binary_expr->op == "<") return Value::make_bool(left.number < right.number);
 
-        if (bin->op == "==") {
+        if (binary_expr->op == "==") {
             if (left.kind != right.kind) return Value::make_bool(false);
             switch (left.kind) {
                 case Value::Kind::Number: return Value::make_bool(left.number  == right.number);
@@ -345,7 +356,7 @@ Value Interpreter::eval_expression(const Expression* e, Environment& env) {
                 case Value::Kind::Shape:  return Value::make_bool(left.shape   == right.shape);
             }
         }
-        if (bin->op == "!=") {
+        if (binary_expr->op == "!=") {
             if (left.kind != right.kind) return Value::make_bool(true);
             switch (left.kind) {
                 case Value::Kind::Number: return Value::make_bool(left.number  != right.number);
@@ -357,34 +368,34 @@ Value Interpreter::eval_expression(const Expression* e, Environment& env) {
             }
         }
 
-        throw std::runtime_error("Unknown operator: " + bin->op);
+        throw std::runtime_error("Unknown operator: " + binary_expr->op);
     }
 
     // ── List ──────────────────────────────────────────────────────────────────
 
-    if (auto* le = dynamic_cast<const ListExpression*>(e)) {
+    if (auto* list_expr = dynamic_cast<const ListExpression*>(e)) {
         std::vector<Value> items;
-        for (auto& elem : le->elements)
-            items.push_back(eval_expression(elem.get(), env));
+        for (auto& element : list_expr->elements)
+            items.push_back(eval_expression(element.get(), env));
         return Value::make_list(std::move(items));
     }
 
     // collection[i] or string[i]
-    if (auto* ie = dynamic_cast<const IndexExpression*>(e)) {
-        Value obj = eval_expression(ie->object.get(), env);
-        Value idx = eval_expression(ie->index.get(), env);
-        if (idx.kind != Value::Kind::Number)
+    if (auto* index_expr = dynamic_cast<const IndexExpression*>(e)) {
+        Value obj        = eval_expression(index_expr->object.get(), env);
+        Value index_val  = eval_expression(index_expr->index.get(), env);
+        if (index_val.kind != Value::Kind::Number)
             throw std::runtime_error("Index must be a number");
-        int i = (int)idx.number;
+        int index = (int)index_val.number;
         if (obj.kind == Value::Kind::List) {
-            if (i < 0 || i >= (int)obj.list->size())
+            if (index < 0 || index >= (int)obj.list->size())
                 throw std::runtime_error("List index out of range");
-            return (*obj.list)[i];
+            return (*obj.list)[index];
         }
         if (obj.kind == Value::Kind::String) {
-            if (i < 0 || i >= (int)obj.str.size())
+            if (index < 0 || index >= (int)obj.str.size())
                 throw std::runtime_error("String index out of range");
-            return Value::make_string(std::string(1, obj.str[i]));
+            return Value::make_string(std::string(1, obj.str[index]));
         }
         throw std::runtime_error("Cannot index into this type");
     }
@@ -392,72 +403,76 @@ Value Interpreter::eval_expression(const Expression* e, Environment& env) {
     // ── Shape ─────────────────────────────────────────────────────────────────
 
     // Person { name: "sam", age: 20 }
-    if (auto* si = dynamic_cast<const ShapeInstanceExpression*>(e)) {
-        auto it = shapes.find(si->shape_name);
-        if (it == shapes.end())
+    if (auto* shape_instance = dynamic_cast<const ShapeInstanceExpression*>(e)) {
+        auto shape_def = shapes.find(shape_instance->shape_name);
+        if (shape_def == shapes.end())
             throw std::runtime_error(
-                "Unknown shape '" + si->shape_name + "'");
+                "Unknown shape '" + shape_instance->shape_name + "'");
 
         std::unordered_map<std::string, Value> fields;
-        for (auto& [fname, fexpr] : si->fields) {
+        for (auto& [field_name, field_expr] : shape_instance->fields) {
             // Find declared type for this field
             const ShapeField* def = nullptr;
-            for (auto& f : it->second.fields)
-                if (f.name == fname) { def = &f; break; }
+            for (auto& f : shape_def->second.fields)
+                if (f.name == field_name) { def = &f; break; }
             if (!def)
                 throw std::runtime_error(
-                    "Shape '" + si->shape_name +
-                    "' has no field '" + fname + "'");
+                    "Shape '" + shape_instance->shape_name +
+                    "' has no field '" + field_name + "'");
 
-            Value val = eval_expression(fexpr.get(), env);
-            if (!value_matches_type(val, def->type))
+            Value field_value = eval_expression(field_expr.get(), env);
+            if (!value_matches_type(field_value, def->type))
                 throw std::runtime_error(
-                    "Field '" + fname + "' expects " + def->type +
-                    " but got " + type_name_of(val));
+                    "Field '" + field_name + "' expects " + def->type +
+                    " but got " + type_name_of(field_value));
 
-            fields[fname] = std::move(val);
+            fields[field_name] = std::move(field_value);
         }
 
         // Ensure all declared fields are provided
-        for (auto& f : it->second.fields)
+        for (auto& f : shape_def->second.fields)
             if (fields.find(f.name) == fields.end())
                 throw std::runtime_error(
                     "Missing field '" + f.name +
-                    "' in " + si->shape_name + " instantiation");
+                    "' in " + shape_instance->shape_name + " instantiation");
 
-        return Value::make_shape(si->shape_name, std::move(fields));
+        return Value::make_shape(shape_instance->shape_name, std::move(fields));
     }
 
     // sam.name
-    if (auto* fa = dynamic_cast<const FieldAccessExpression*>(e)) {
-        Value obj = eval_expression(fa->object.get(), env);
+    if (auto* field_access = dynamic_cast<const FieldAccessExpression*>(e)) {
+        Value obj = eval_expression(field_access->object.get(), env);
         if (obj.kind != Value::Kind::Shape)
             throw std::runtime_error(make_error(
-                "Cannot access field on non-shape value", fa->line));
-        auto it = obj.shape->find(fa->field);
-        if (it == obj.shape->end())
+                "Cannot access field on non-shape value", field_access->line));
+        auto field_entry = obj.shape->find(field_access->field);
+        if (field_entry == obj.shape->end())
             throw std::runtime_error(make_error(
                 "Shape '" + obj.shape_type +
-                "' has no field '" + fa->field + "'", fa->line));
-        return it->second;
+                "' has no field '" + field_access->field + "'", field_access->line));
+        return field_entry->second;
     }
+
+    // own expr — interpreter: heap allocation handled by shared_ptr; just eval inner
+    if (auto* own_expr = dynamic_cast<const OwnExpression*>(e))
+        return eval_expression(own_expr->inner.get(), env);
 
     // ── Function calls ────────────────────────────────────────────────────────
 
-    if (auto* c = dynamic_cast<const CallExpression*>(e)) {
+    if (auto* call_expr = dynamic_cast<const CallExpression*>(e)) {
         // Built-ins checked before user-defined functions
 
-        if (c->callee == "print") {
-            for (auto& arg : c->args)
+        if (call_expr->callee == "print") {
+            for (auto& arg : call_expr->args)
                 std::cout << eval_expression(arg.get(), env).to_string();
             std::cout << "\n";
             return Value::make_nil();
         }
 
-        if (c->callee == "length") {
-            if (c->args.size() != 1)
+        if (call_expr->callee == "length") {
+            if (call_expr->args.size() != 1)
                 throw std::runtime_error("length() takes 1 argument");
-            Value val = eval_expression(c->args[0].get(), env);
+            Value val = eval_expression(call_expr->args[0].get(), env);
             if (val.kind == Value::Kind::List)
                 return Value::make_number((double)val.list->size());
             if (val.kind == Value::Kind::String)
@@ -465,49 +480,49 @@ Value Interpreter::eval_expression(const Expression* e, Environment& env) {
             throw std::runtime_error("length() requires a list or string");
         }
 
-        if (c->callee == "append") {
-            if (c->args.size() != 2)
+        if (call_expr->callee == "append") {
+            if (call_expr->args.size() != 2)
                 throw std::runtime_error("append() takes 2 arguments");
-            Value lst  = eval_expression(c->args[0].get(), env);
-            Value item = eval_expression(c->args[1].get(), env);
-            if (lst.kind != Value::Kind::List)
+            Value list  = eval_expression(call_expr->args[0].get(), env);
+            Value item  = eval_expression(call_expr->args[1].get(), env);
+            if (list.kind != Value::Kind::List)
                 throw std::runtime_error("append() requires a list");
-            lst.list->push_back(std::move(item));
+            list.list->push_back(std::move(item));
             return Value::make_nil();
         }
 
-        if (c->callee == "first") {
-            if (c->args.size() != 1)
+        if (call_expr->callee == "first") {
+            if (call_expr->args.size() != 1)
                 throw std::runtime_error("first() takes 1 argument");
-            Value val = eval_expression(c->args[0].get(), env);
+            Value val = eval_expression(call_expr->args[0].get(), env);
             if (val.kind != Value::Kind::List || val.list->empty())
                 throw std::runtime_error("first() requires a non-empty list");
             return val.list->front();
         }
 
-        if (c->callee == "last") {
-            if (c->args.size() != 1)
+        if (call_expr->callee == "last") {
+            if (call_expr->args.size() != 1)
                 throw std::runtime_error("last() takes 1 argument");
-            Value val = eval_expression(c->args[0].get(), env);
+            Value val = eval_expression(call_expr->args[0].get(), env);
             if (val.kind != Value::Kind::List || val.list->empty())
                 throw std::runtime_error("last() requires a non-empty list");
             return val.list->back();
         }
 
-        if (c->callee == "input") {
-            if (c->args.size() > 1)
+        if (call_expr->callee == "input") {
+            if (call_expr->args.size() > 1)
                 throw std::runtime_error("input() takes 0 or 1 arguments");
-            if (c->args.size() == 1)
-                std::cout << eval_expression(c->args[0].get(), env).to_string();
+            if (call_expr->args.size() == 1)
+                std::cout << eval_expression(call_expr->args[0].get(), env).to_string();
             std::string line;
             std::getline(std::cin, line);
             return Value::make_string(line);
         }
 
-        if (c->callee == "to_number") {
-            if (c->args.size() != 1)
+        if (call_expr->callee == "to_number") {
+            if (call_expr->args.size() != 1)
                 throw std::runtime_error("to_number() takes 1 argument");
-            Value val = eval_expression(c->args[0].get(), env);
+            Value val = eval_expression(call_expr->args[0].get(), env);
             if (val.kind == Value::Kind::Number) return val;
             if (val.kind == Value::Kind::String) {
                 try {
@@ -520,18 +535,56 @@ Value Interpreter::eval_expression(const Expression* e, Environment& env) {
             throw std::runtime_error("to_number() requires a string or number");
         }
 
-        if (c->callee == "to_text") {
-            if (c->args.size() != 1)
+        if (call_expr->callee == "to_text") {
+            if (call_expr->args.size() != 1)
                 throw std::runtime_error("to_text() takes 1 argument");
             return Value::make_string(
-                eval_expression(c->args[0].get(), env).to_string());
+                eval_expression(call_expr->args[0].get(), env).to_string());
+        }
+
+        // ── Raw pointer built-ins ─────────────────────────────────────────────
+
+        if (call_expr->callee == "allocate") {
+            Value size_val = eval_expression(call_expr->args[0].get(), env);
+            void* raw_ptr  = std::malloc((size_t)size_val.number);
+            return Value::make_number((double)(uintptr_t)raw_ptr);
+        }
+        if (call_expr->callee == "read") {
+            Value addr_val = eval_expression(call_expr->args[0].get(), env);
+            void* raw_ptr  = (void*)(uintptr_t)(uint64_t)addr_val.number;
+            double read_val = 0;
+            std::memcpy(&read_val, raw_ptr, sizeof(double));
+            return Value::make_number(read_val);
+        }
+        if (call_expr->callee == "write") {
+            Value addr_val = eval_expression(call_expr->args[0].get(), env);
+            Value data_val = eval_expression(call_expr->args[1].get(), env);
+            void*  raw_ptr   = (void*)(uintptr_t)(uint64_t)addr_val.number;
+            double write_val = data_val.number;
+            std::memcpy(raw_ptr, &write_val, sizeof(double));
+            return Value::make_nil();
+        }
+        if (call_expr->callee == "free") {
+            Value addr_val = eval_expression(call_expr->args[0].get(), env);
+            std::free((void*)(uintptr_t)(uint64_t)addr_val.number);
+            return Value::make_nil();
+        }
+        if (call_expr->callee == "ptr_add") {
+            Value addr_val   = eval_expression(call_expr->args[0].get(), env);
+            Value offset_val = eval_expression(call_expr->args[1].get(), env);
+            uintptr_t addr   = (uintptr_t)(uint64_t)addr_val.number;
+            addr            += (uintptr_t)(size_t)offset_val.number;
+            return Value::make_number((double)addr);
+        }
+        if (call_expr->callee == "ptr_to_number" || call_expr->callee == "number_to_ptr") {
+            return eval_expression(call_expr->args[0].get(), env);
         }
 
         // Fall through to user-defined function
         std::vector<Value> args;
-        for (auto& arg : c->args)
+        for (auto& arg : call_expr->args)
             args.push_back(eval_expression(arg.get(), env));
-        return call_function(c->callee, args, c->line);
+        return call_function(call_expr->callee, args, call_expr->line);
     }
 
     throw std::runtime_error("Unknown expression type");
@@ -541,25 +594,25 @@ Value Interpreter::eval_expression(const Expression* e, Environment& env) {
 
 Value Interpreter::call_function(const std::string& name,
                                  const std::vector<Value>& args, int line) {
-    auto it = functions.find(name);
-    if (it == functions.end())
+    auto function_entry = functions.find(name);
+    if (function_entry == functions.end())
         throw std::runtime_error(make_error(
             "Undefined function '" + name + "'", line));
 
-    SprigFunction& fn = it->second;
-    if (args.size() != fn.params.size())
+    SprigFunction& function = function_entry->second;
+    if (args.size() != function.params.size())
         throw std::runtime_error(make_error(
-            "'" + name + "' expects " + std::to_string(fn.params.size()) +
+            "'" + name + "' expects " + std::to_string(function.params.size()) +
             " args, got " + std::to_string(args.size()), line));
 
     // Each call gets its own scope; global is the shared outer for all functions.
     // bind() ensures params never accidentally shadow or update outer variables.
-    Environment fn_env(&global);
-    for (size_t i = 0; i < fn.params.size(); i++)
-        fn_env.bind(fn.params[i], args[i], true);
+    Environment function_env(&global);
+    for (size_t i = 0; i < function.params.size(); i++)
+        function_env.bind(function.params[i], args[i], true);
 
     try {
-        eval_block(*fn.body, fn_env);
+        eval_block(*function.body, function_env);
     } catch (ReturnSignal& ret) {
         return ret.value;
     }

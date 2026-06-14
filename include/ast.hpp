@@ -204,6 +204,20 @@ struct IncludeStatement : Statement {
         : path(std::move(p)), line(ln) {}
 };
 
+// own expr — heap-allocates expr with unique ownership (Box<T>)
+struct OwnExpression : Expression {
+    ExpressionPointer inner;
+    int               line;
+    OwnExpression(ExpressionPointer inner, int ln)
+        : inner(std::move(inner)), line(ln) {}
+};
+
+// unsafe: block — permits raw pointer operations inside
+struct UnsafeStatement : Statement {
+    Block body;
+    UnsafeStatement(Block b) : body(std::move(b)) {}
+};
+
 // let x borrow y  — immutable borrow binding
 struct BorrowStatement : Statement {
     std::string target;

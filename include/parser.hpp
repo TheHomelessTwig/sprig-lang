@@ -18,9 +18,9 @@ private:
     bool   at_end();
     Token& advance();
     Token& peek_at(int offset);   // non-consuming lookahead
-    bool   check(TokenType t);
-    bool   match(TokenType t);
-    Token  expect(TokenType t, const std::string& msg);
+    bool   check(TokenType token_type);
+    bool   match(TokenType token_type);
+    Token  expect(TokenType token_type, const std::string& msg);
     void   skip_newlines();
 
     // ── Statements ────────────────────────────────────────────────────────────
@@ -37,6 +37,7 @@ private:
     StatementPointer for_each_statement();
     StatementPointer return_statement();
     StatementPointer expression_statement();
+    StatementPointer unsafe_statement();
     Block            block();
 
     // ── Expressions (descending precedence) ───────────────────────────────────

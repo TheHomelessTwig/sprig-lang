@@ -1,0 +1,41 @@
+// ── own (Box<T>) ─────────────────────────────────────────────────────────────
+
+shape Node:
+    value: number
+    next:  own Node
+
+// Build a linked list: 3 → 2 → 1
+let n1 = own Node { value: 1, next: nothing }
+let n2 = own Node { value: 2, next: n1 }
+let n3 = own Node { value: 3, next: n2 }
+
+print(n3.value)               // 3
+print(n3.next.value)          // 2
+print(n3.next.next.value)     // 1
+
+// ── unsafe raw pointers ───────────────────────────────────────────────────────
+unsafe:
+    let raw = allocate(8)
+    write(raw, 99.5)
+    let val = read(raw)
+    print(val)                // 99.5
+
+    let buf = allocate(16)
+    write(buf, 1.0)
+    let buf2 = ptr_add(buf, 8)
+    write(buf2, 2.0)
+    print(read(buf))          // 1
+    print(read(buf2))         // 2
+
+    free(raw)
+    free(buf)
+
+// ── Borrow from own ───────────────────────────────────────────────────────────
+shape Point:
+    x: number
+    y: number
+
+let p = own Point { x: 3, y: 4 }
+let view borrow p
+print(view.x)                 // 3
+print(p.x)                    // 3

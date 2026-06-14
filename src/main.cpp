@@ -12,11 +12,11 @@
 #include "typechecker.hpp"
 #include "version.hpp"
 
-static std::vector<std::string> split_lines(const std::string& s) {
+static std::vector<std::string> split_lines(const std::string& source) {
     std::vector<std::string> lines;
-    std::istringstream ss(s);
-    std::string ln;
-    while (std::getline(ss, ln)) lines.push_back(ln);
+    std::istringstream source_stream(source);
+    std::string line_text;
+    while (std::getline(source_stream, line_text)) lines.push_back(line_text);
     return lines;
 }
 

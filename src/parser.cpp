@@ -24,11 +24,11 @@ Token& Parser::peek_at(int offset) {
     return tokens[idx];
 }
 
-bool  Parser::check(TokenType t) { return !at_end() && peek().type == t; }
-bool  Parser::match(TokenType t) { if (check(t)) { advance(); return true; } return false; }
+bool  Parser::check(TokenType token_type) { return !at_end() && peek().type == token_type; }
+bool  Parser::match(TokenType token_type) { if (check(token_type)) { advance(); return true; } return false; }
 
-Token Parser::expect(TokenType t, const std::string& msg) {
-    if (check(t)) return advance();
+Token Parser::expect(TokenType token_type, const std::string& msg) {
+    if (check(token_type)) return advance();
     throw std::runtime_error(msg + " (got '" + peek().lexeme +
                              "' at line " + std::to_string(peek().line) + ")");
 }
@@ -86,6 +86,7 @@ StatementPointer Parser::statement() {
         return for_each_statement();
     }
     if (match(TokenType::RETURN)) return return_statement();
+    if (match(TokenType::UNSAFE)) return unsafe_statement();
     if (match(TokenType::STOP))   { match(TokenType::NEWLINE); return std::make_unique<StopStatement>(); }
     if (match(TokenType::SKIP))   { match(TokenType::NEWLINE); return std::make_unique<SkipStatement>(); }
     return expression_statement();
@@ -162,8 +163,11 @@ StatementPointer Parser::shape_definition_statement() {
         else if (match(TokenType::TYPE_NUMBER))  type_str = "number";
         else if (match(TokenType::TYPE_DECIMAL)) type_str = "decimal";
         else if (match(TokenType::TYPE_FLAG))    type_str = "flag";
-        else throw std::runtime_error(
-            "Expected type (text, number, decimal, flag) at line " +
+        else if (match(TokenType::OWN)) {
+            Token sname = expect(TokenType::IDENTIFIER, "Expected shape name after 'own'");
+            type_str = "own " + sname.lexeme;
+        } else throw std::runtime_error(
+            "Expected type (text, number, decimal, flag, own <Shape>) at line " +
             std::to_string(peek().line));
 
         fields.push_back({fname.lexeme, type_str});
@@ -198,9 +202,9 @@ StatementPointer Parser::include_statement() {
 
 // when cond: ... [otherwise: ...]
 StatementPointer Parser::if_statement() {
-    ExpressionPointer cond   = expression();
-    Block             then_b = block();
-    std::optional<Block> else_b;
+    ExpressionPointer condition  = expression();
+    Block             then_block = block();
+    std::optional<Block> else_block;
     skip_newlines();
     if (match(TokenType::ELSE)) {
         skip_newlines();
@@ -208,13 +212,13 @@ StatementPointer Parser::if_statement() {
             // "otherwise when" chains as a nested if
             Block chained;
             chained.stmts.push_back(if_statement());
-            else_b = std::move(chained);
+            else_block = std::move(chained);
         } else {
-            else_b = block();
+            else_block = block();
         }
     }
     return std::make_unique<IfStatement>(
-        std::move(cond), std::move(then_b), std::move(else_b));
+        std::move(condition), std::move(then_block), std::move(else_block));
 }
 
 // as long as cond: body
@@ -239,6 +243,11 @@ StatementPointer Parser::return_statement() {
     ExpressionPointer val = expression();
     match(TokenType::NEWLINE);
     return std::make_unique<ReturnStatement>(std::move(val));
+}
+
+StatementPointer Parser::unsafe_statement() {
+    Block body = block();
+    return std::make_unique<UnsafeStatement>(std::move(body));
 }
 
 // Bare expression used as a statement (typically a function call)
@@ -345,8 +354,8 @@ ExpressionPointer Parser::call() {
             auto* ident = dynamic_cast<IdentExpression*>(expr.get());
             if (!ident)
                 throw std::runtime_error("Can only call named functions");
-            std::string callee   = ident->name;
-            int         fn_line  = ident->line;
+            std::string callee    = ident->name;
+            int         call_line = ident->line;
             advance();
             std::vector<ExpressionPointer> args;
             if (!check(TokenType::RPAREN)) {
@@ -354,7 +363,7 @@ ExpressionPointer Parser::call() {
             }
             expect(TokenType::RPAREN, "Expected ')'");
             expr = std::make_unique<CallExpression>(
-                callee, std::move(args), fn_line);
+                callee, std::move(args), call_line);
         } else if (check(TokenType::LBRACKET)) {
             advance();
             ExpressionPointer index = expression();
@@ -405,6 +414,13 @@ ExpressionPointer Parser::primary() {
         expect(TokenType::RBRACE, "Expected '}'");
         return std::make_unique<ShapeInstanceExpression>(
             name.lexeme, std::move(fields));
+    }
+
+    // own expr — heap allocation with ownership
+    if (match(TokenType::OWN)) {
+        int line_number = previous().line;
+        ExpressionPointer inner = primary();
+        return std::make_unique<OwnExpression>(std::move(inner), line_number);
     }
 
     // borrow [mutable] x  — used in function arguments and expressions

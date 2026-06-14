@@ -23,30 +23,30 @@ struct Value {
 
     // ── Factory methods ───────────────────────────────────────────────────────
 
-    static Value make_number(double n) {
-        Value v; v.kind = Kind::Number; v.number = n; return v;
+    static Value make_number(double value) {
+        Value result; result.kind = Kind::Number; result.number = value; return result;
     }
-    static Value make_string(std::string s) {
-        Value v; v.kind = Kind::String; v.str = std::move(s); return v;
+    static Value make_string(std::string text) {
+        Value result; result.kind = Kind::String; result.str = std::move(text); return result;
     }
-    static Value make_bool(bool b) {
-        Value v; v.kind = Kind::Bool; v.boolean = b; return v;
+    static Value make_bool(bool value) {
+        Value result; result.kind = Kind::Bool; result.boolean = value; return result;
     }
     static Value make_nil() { return Value{}; }
     static Value make_list(std::vector<Value> items = {}) {
-        Value v;
-        v.kind = Kind::List;
-        v.list = std::make_shared<std::vector<Value>>(std::move(items));
-        return v;
+        Value result;
+        result.kind = Kind::List;
+        result.list = std::make_shared<std::vector<Value>>(std::move(items));
+        return result;
     }
     static Value make_shape(std::string type_name,
                             std::unordered_map<std::string, Value> fields) {
-        Value v;
-        v.kind       = Kind::Shape;
-        v.shape_type = std::move(type_name);
-        v.shape      = std::make_shared<std::unordered_map<std::string, Value>>(
+        Value result;
+        result.kind       = Kind::Shape;
+        result.shape_type = std::move(type_name);
+        result.shape      = std::make_shared<std::unordered_map<std::string, Value>>(
             std::move(fields));
-        return v;
+        return result;
     }
 
     // ── Conversions ───────────────────────────────────────────────────────────
@@ -54,30 +54,30 @@ struct Value {
     std::string to_string() const {
         switch (kind) {
             case Kind::Number: {
-                char buf[64];
-                snprintf(buf, sizeof(buf), "%g", number);
-                return buf;
+                char number_buf[64];
+                snprintf(number_buf, sizeof(number_buf), "%g", number);
+                return number_buf;
             }
             case Kind::String: return str;
             case Kind::Bool:   return boolean ? "true" : "false";
             case Kind::Nil:    return "nil";
             case Kind::List: {
-                std::string s = "[";
+                std::string result = "[";
                 for (size_t i = 0; i < list->size(); i++) {
-                    if (i) s += ", ";
-                    s += (*list)[i].to_string();
+                    if (i) result += ", ";
+                    result += (*list)[i].to_string();
                 }
-                return s + "]";
+                return result + "]";
             }
             case Kind::Shape: {
-                std::string s = shape_type + " { ";
+                std::string result = shape_type + " { ";
                 bool first = true;
-                for (auto& [k, v] : *shape) {
-                    if (!first) s += ", ";
-                    s += k + ": " + v.to_string();
+                for (auto& [field_key, field_value] : *shape) {
+                    if (!first) result += ", ";
+                    result += field_key + ": " + field_value.to_string();
                     first = false;
                 }
-                return s + " }";
+                return result + " }";
             }
         }
         return "nil";
@@ -111,33 +111,33 @@ public:
     // declare: if 'name' already exists in this scope, check mutability and update.
     // If not found in this scope, create a new binding here with the given mutability.
     // Does NOT walk outer scopes — use assign() for cross-scope mutation.
-    void declare(const std::string& name, Value val, bool is_mutable) {
-        auto it = values.find(name);
-        if (it != values.end()) {
+    void declare(const std::string& name, Value new_value, bool is_mutable) {
+        auto existing = values.find(name);
+        if (existing != values.end()) {
             if (!mutability[name])
                 throw std::runtime_error(
                     "Cannot reassign immutable variable '" + name + "'");
-            it->second = std::move(val);
+            existing->second = std::move(new_value);
             // Mutability is locked at first declaration — 'let x = new_val'
             // keeps the original mutable/immutable status.
             return;
         }
-        values[name]     = std::move(val);
+        values[name]     = std::move(new_value);
         mutability[name] = is_mutable;
     }
 
     // assign: walk outer scopes to update an existing binding.
     // Throws if the variable is immutable or does not exist anywhere.
     // Reserved for future explicit assignment syntax (e.g. `x = val` without 'let').
-    void assign(const std::string& name, Value val) {
+    void assign(const std::string& name, Value new_value) {
         Environment* env = this;
         while (env) {
-            auto it = env->values.find(name);
-            if (it != env->values.end()) {
+            auto existing = env->values.find(name);
+            if (existing != env->values.end()) {
                 if (!env->mutability[name])
                     throw std::runtime_error(
                         "Cannot reassign immutable variable '" + name + "'");
-                it->second = std::move(val);
+                existing->second = std::move(new_value);
                 return;
             }
             env = env->outer;
@@ -148,14 +148,14 @@ public:
     // bind: unconditionally create/overwrite a binding in this scope.
     // Used for function parameters and loop iteration variables where we always
     // want a fresh local binding regardless of what outer scopes contain.
-    void bind(const std::string& name, Value val, bool is_mutable = true) {
-        values[name]     = std::move(val);
+    void bind(const std::string& name, Value new_value, bool is_mutable = true) {
+        values[name]     = std::move(new_value);
         mutability[name] = is_mutable;
     }
 
     Value get(const std::string& name) const {
-        auto it = values.find(name);
-        if (it != values.end()) return it->second;
+        auto entry = values.find(name);
+        if (entry != values.end()) return entry->second;
         if (outer) return outer->get(name);
         throw std::runtime_error("Undefined variable '" + name + "'");
     }

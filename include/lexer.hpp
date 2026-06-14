@@ -15,7 +15,9 @@ enum class TokenType {
     SHAPE,
     MUTABLE,
     BORROW,
+    OWN,
     INCLUDE,
+    UNSAFE,
 
     // Control flow keywords
     WHEN,
@@ -82,8 +84,8 @@ struct Token {
     std::string lexeme;
     int         line;
     int         col;
-    Token(TokenType t, std::string lex, int ln, int c = 0)
-        : type(t), lexeme(std::move(lex)), line(ln), col(c) {}
+    Token(TokenType token_type, std::string lexeme_str, int line_number, int column = 0)
+        : type(token_type), lexeme(std::move(lexeme_str)), line(line_number), col(column) {}
 };
 
 class Lexer {
@@ -116,8 +118,8 @@ private:
     void scan_identifier(std::vector<Token>& tokens);
 };
 
-inline std::string token_type_name(TokenType t) {
-    switch (t) {
+inline std::string token_type_name(TokenType type) {
+    switch (type) {
         // Literals
         case TokenType::NUMBER:     return "NUMBER";
         case TokenType::STRING:     return "STRING";
@@ -129,7 +131,9 @@ inline std::string token_type_name(TokenType t) {
         case TokenType::SHAPE:   return "SHAPE";
         case TokenType::MUTABLE: return "MUTABLE";
         case TokenType::BORROW:  return "BORROW";
+        case TokenType::OWN:     return "OWN";
         case TokenType::INCLUDE: return "INCLUDE";
+        case TokenType::UNSAFE:  return "UNSAFE";
 
         // Control flow keywords
         case TokenType::WHEN:   return "WHEN";
