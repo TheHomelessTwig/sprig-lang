@@ -1,0 +1,22 @@
+// Mutability test — variables are immutable by default.
+
+let x = 10
+print(x)     // 10
+
+// Re-declaring in the same scope is blocked:
+// let x = 20   // Error: Cannot reassign immutable variable 'x'
+
+// 'let mutable' opts in to reassignment within the same scope.
+let mutable counter = 0
+print(counter)   // 0
+
+let counter = 1
+print(counter)   // 1
+
+let counter = 2
+print(counter)   // 2
+
+// Note: 'let' inside a nested block (if/while/for) creates a NEW local
+// variable that shadows the outer one — the outer is NOT modified.
+// To mutate across scopes, use 'let mutable' in the outer scope and
+// reassign with 'let' only within that same scope.

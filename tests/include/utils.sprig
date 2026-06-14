@@ -1,0 +1,9 @@
+define square(n):
+    give back n * n
+
+define greet(name):
+    print("Hello " + name)
+
+shape Point:
+    x: number
+    y: number

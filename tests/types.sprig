@@ -1,0 +1,24 @@
+shape Person:
+    name: text
+    age: number
+    active: flag
+
+let sam = Person { name: "sam", age: 20, active: true }
+print(sam.name)     // sam
+print(sam.age)      // 20
+print(sam.active)   // true
+
+// Field update — type enforced at assignment
+sam.age = 21
+print(sam.age)      // 21
+
+// These should error — uncomment one at a time to test:
+
+// Wrong type at instantiation:
+// let bad = Person { name: 42, age: 20, active: true }
+
+// Wrong type at field assignment:
+// sam.age = "twenty"
+
+// Missing field at instantiation:
+// let incomplete = Person { name: "test", age: 5 }

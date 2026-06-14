@@ -33,7 +33,7 @@ endif()
 # 3. SOURCE FILE DISCOVERY (Modern Target-Based Approach)
 # ---------------------------------------------------------------------------
 # Automatically finds all source and header files inside src/
-file(GLOB_RECURSE SOURCE_FILES 
+file(GLOB_RECURSE SOURCE_FILES
     "src/*.cpp"
     "src/*.cc"
     "src/*.c"
@@ -41,12 +41,20 @@ file(GLOB_RECURSE SOURCE_FILES
     "include/*.hpp"
 )
 
+# Generate version.hpp from the project VERSION declared above
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/version.hpp.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/include/version.hpp"
+    @ONLY
+)
+
 # Define the build executable target
 add_executable(${PROJECT_NAME} ${SOURCE_FILES})
 
-# Include directories mapped cleanly to the target
-target_include_directories(${PROJECT_NAME} PUBLIC 
+# Include directories: source headers + generated version.hpp
+target_include_directories(${PROJECT_NAME} PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
 

@@ -1,0 +1,5 @@
+include "utils.sprig"
+
+let p = Point { x: 3, y: 4 }
+print(square(p.x))    // 9
+greet("sprig")        // Hello sprig

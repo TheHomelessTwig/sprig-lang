@@ -4,38 +4,46 @@
 #include <stdexcept>
 #include <unordered_map>
 
+// ── Keyword / operator tables ─────────────────────────────────────────────────
+
 static const std::unordered_map<std::string, TokenType> KEYWORDS = {
-    {"let", TokenType::LET},
-    {"define", TokenType::DEFINE},
-    {"when", TokenType::WHEN},
+    {"let",       TokenType::LET},
+    {"define",    TokenType::DEFINE},
+    {"when",      TokenType::WHEN},
     {"otherwise", TokenType::ELSE},
-    {"true", TokenType::TRUE},
-    {"false", TokenType::FALSE},
-    {"nothing", TokenType::NOTHING},
-    {"and", TokenType::AND},
-    {"or", TokenType::OR},
-    {"not", TokenType::NOT},
-    {"is", TokenType::IS},
-    {"each", TokenType::EACH},
-    {"in", TokenType::IN},
-    {"stop", TokenType::STOP},
-    {"skip", TokenType::SKIP},
-    {"shape", TokenType::SHAPE},
-    {"include", TokenType::INCLUDE},
-    {"mutable", TokenType::MUTABLE},
-    {"text", TokenType::TYPE_TEXT},
-    {"number", TokenType::TYPE_NUMBER},
-    {"decimal", TokenType::TYPE_DECIMAL},
-    {"flag", TokenType::TYPE_FLAG},
-    {"for", TokenType::FOR},
+    {"true",      TokenType::TRUE},
+    {"false",     TokenType::FALSE},
+    {"nothing",   TokenType::NOTHING},
+    {"and",       TokenType::AND},
+    {"or",        TokenType::OR},
+    {"not",       TokenType::NOT},
+    {"is",        TokenType::IS},
+    {"each",      TokenType::EACH},
+    {"in",        TokenType::IN},
+    {"stop",      TokenType::STOP},
+    {"skip",      TokenType::SKIP},
+    {"shape",     TokenType::SHAPE},
+    {"include",   TokenType::INCLUDE},
+    {"mutable",   TokenType::MUTABLE},
+    {"text",      TokenType::TYPE_TEXT},
+    {"number",    TokenType::TYPE_NUMBER},
+    {"decimal",   TokenType::TYPE_DECIMAL},
+    {"flag",      TokenType::TYPE_FLAG},
+    {"for",       TokenType::FOR},
 };
 
+// Multi-word keywords resolved in a second pass.
+// "as long as" and "give back" cannot be single-scan because each component
+// word is a valid identifier on its own.
 static const std::vector<std::pair<std::vector<std::string>, TokenType>>
     MULTIWORD = {
         {{"as", "long", "as"}, TokenType::WHILE},
-        {{"give", "back"}, TokenType::RETURN},
+        {{"give", "back"},     TokenType::RETURN},
 };
 
+// ── Post-scan passes ──────────────────────────────────────────────────────────
+
+// Merge consecutive identifier tokens that form a multi-word keyword.
 static std::vector<Token> resolve_multiword(std::vector<Token> tokens) {
     std::vector<Token> out;
     int i = 0;
@@ -45,15 +53,15 @@ static std::vector<Token> resolve_multiword(std::vector<Token> tokens) {
             if (i + (int)words.size() > (int)tokens.size()) continue;
             bool ok = true;
             for (int j = 0; j < (int)words.size(); j++) {
-                if (tokens[i + j].type != TokenType::IDENTIFIER ||
+                if (tokens[i + j].type   != TokenType::IDENTIFIER ||
                     tokens[i + j].lexeme != words[j]) {
                     ok = false;
                     break;
                 }
             }
             if (ok) {
-                out.emplace_back(type, tokens[i].lexeme, tokens[i].line,
-                                 tokens[i].col);
+                out.emplace_back(type, tokens[i].lexeme,
+                                 tokens[i].line, tokens[i].col);
                 i += words.size();
                 matched = true;
                 break;
@@ -64,9 +72,11 @@ static std::vector<Token> resolve_multiword(std::vector<Token> tokens) {
     return out;
 }
 
+// Insert INDENT / DEDENT tokens based on column changes after each NEWLINE.
+// The column of the first non-newline token on a line determines its indent level.
 static std::vector<Token> insert_indent_tokens(std::vector<Token> tokens) {
     std::vector<Token> out;
-    std::vector<int> indent_stack = {0};
+    std::vector<int>   indent_stack = {0};
 
     size_t i = 0;
     while (i < tokens.size()) {
@@ -76,6 +86,7 @@ static std::vector<Token> insert_indent_tokens(std::vector<Token> tokens) {
             out.push_back(tok);
             i++;
 
+            // Skip any consecutive blank lines to find next real token's column
             size_t j = i;
             while (j < tokens.size() && tokens[j].type == TokenType::NEWLINE)
                 j++;
@@ -92,8 +103,7 @@ static std::vector<Token> insert_indent_tokens(std::vector<Token> tokens) {
             } else if (new_indent < cur_indent) {
                 while (indent_stack.back() > new_indent) {
                     indent_stack.pop_back();
-                    out.emplace_back(TokenType::DEDENT, "", tok.line,
-                                     new_indent);
+                    out.emplace_back(TokenType::DEDENT, "", tok.line, new_indent);
                 }
                 if (indent_stack.back() != new_indent)
                     throw std::runtime_error(
@@ -106,6 +116,7 @@ static std::vector<Token> insert_indent_tokens(std::vector<Token> tokens) {
         }
     }
 
+    // Close any still-open indent levels at end of file
     while (indent_stack.size() > 1) {
         out.emplace_back(TokenType::DEDENT, "",
                          tokens.empty() ? 0 : tokens.back().line, 0);
@@ -115,12 +126,14 @@ static std::vector<Token> insert_indent_tokens(std::vector<Token> tokens) {
     return out;
 }
 
+// ── Lexer methods ─────────────────────────────────────────────────────────────
+
 Lexer::Lexer(std::string src) : source(std::move(src)) {}
 
 std::vector<Token> Lexer::tokenize() {
     std::vector<Token> tokens;
     while (!at_end()) {
-        start = current;
+        start     = current;
         start_col = col;
         scan_token(tokens);
     }
@@ -129,97 +142,54 @@ std::vector<Token> Lexer::tokenize() {
     return insert_indent_tokens(std::move(result));
 }
 
-bool Lexer::at_end() { return current >= (int)source.size(); }
-
-char Lexer::advance() {
-    col++;
-    return source[current++];
-}
-
-char Lexer::peek() { return at_end() ? '\0' : source[current]; }
-char Lexer::peek_next() {
-    return (current + 1 >= (int)source.size()) ? '\0' : source[current + 1];
-}
-
-bool Lexer::match(char expected) {
-    if (at_end() || source[current] != expected) return false;
-    col++;
-    current++;
-    return true;
-}
-
-void Lexer::add(std::vector<Token>& tokens, TokenType type) {
-    tokens.emplace_back(type, source.substr(start, current - start), line,
-                        start_col);
-}
-
 void Lexer::scan_token(std::vector<Token>& tokens) {
     char c = advance();
     switch (c) {
-        case '(':
-            add(tokens, TokenType::LPAREN);
-            break;
-        case ')':
-            add(tokens, TokenType::RPAREN);
-            break;
-        case '{':
-            add(tokens, TokenType::LBRACE);
-            break;
-        case '}':
-            add(tokens, TokenType::RBRACE);
-            break;
-        case ',':
-            add(tokens, TokenType::COMMA);
-            break;
-        case '+':
-            add(tokens, TokenType::PLUS);
-            break;
-        case '-':
-            add(tokens, TokenType::MINUS);
-            break;
-        case '*':
-            add(tokens, TokenType::STAR);
-            break;
-        case ':':
-            add(tokens, TokenType::COLON);
-            break;
+        // Single-character delimiters
+        case '(': add(tokens, TokenType::LPAREN);   break;
+        case ')': add(tokens, TokenType::RPAREN);   break;
+        case '{': add(tokens, TokenType::LBRACE);   break;
+        case '}': add(tokens, TokenType::RBRACE);   break;
+        case '[': add(tokens, TokenType::LBRACKET); break;
+        case ']': add(tokens, TokenType::RBRACKET); break;
+        case ',': add(tokens, TokenType::COMMA);    break;
+        case ':': add(tokens, TokenType::COLON);    break;
+        case '.': add(tokens, TokenType::DOT);      break;
+
+        // Arithmetic operators
+        case '+': add(tokens, TokenType::PLUS);  break;
+        case '-': add(tokens, TokenType::MINUS); break;
+        case '*': add(tokens, TokenType::STAR);  break;
+
+        // '/' or '//' (line comment)
         case '/':
-            if (match('/')) {
-                while (peek() != '\n' && !at_end()) advance();
-            } else {
+            if (match('/'))
+                while (peek() != '\n' && !at_end()) advance(); // eat comment
+            else
                 add(tokens, TokenType::SLASH);
-            }
             break;
-        case '=':
-            add(tokens, match('=') ? TokenType::EQ : TokenType::ASSIGN);
-            break;
-        case '!':
-            add(tokens, match('=') ? TokenType::NEQ : TokenType::ILLEGAL);
-            break;
-        case '<':
-            add(tokens, TokenType::LT);
-            break;
-        case '>':
-            add(tokens, TokenType::GT);
-            break;
+
+        // One- or two-character operators
+        case '=': add(tokens, match('=') ? TokenType::EQ  : TokenType::ASSIGN);  break;
+        case '!': add(tokens, match('=') ? TokenType::NEQ : TokenType::ILLEGAL); break;
+        case '<': add(tokens, TokenType::LT); break;
+        case '>': add(tokens, TokenType::GT); break;
+
+        // Whitespace (ignored)
         case ' ':
         case '\r':
         case '\t':
             break;
+
+        // Newline: emit token and reset column for indent tracking
         case '\n':
             add(tokens, TokenType::NEWLINE);
             line++;
             col = 0;
             break;
-        case '"':
-            scan_string(tokens);
-            break;
-        case '[':
-            add(tokens, TokenType::LBRACKET);
-            break;
-        case ']':
-            add(tokens, TokenType::RBRACKET);
-            break;
+
+        case '"': scan_string(tokens); break;
+
         default:
             if (std::isdigit(c))
                 scan_number(tokens);
@@ -232,21 +202,20 @@ void Lexer::scan_token(std::vector<Token>& tokens) {
 
 void Lexer::scan_string(std::vector<Token>& tokens) {
     while (peek() != '"' && !at_end()) {
-        if (peek() == '\n') {
-            line++;
-            col = 0;
-        }
+        if (peek() == '\n') { line++; col = 0; }
         advance();
     }
     if (at_end())
         throw std::runtime_error("Unterminated string at line " +
                                  std::to_string(line));
-    advance();
+    advance(); // closing "
     add(tokens, TokenType::STRING);
 }
 
 void Lexer::scan_number(std::vector<Token>& tokens) {
     while (std::isdigit(peek())) advance();
+    // Only consume '.' when followed by a digit — keeps '.' available as DOT
+    // for field access (e.g. obj.field) when it appears outside a number literal.
     if (peek() == '.' && std::isdigit(peek_next())) {
         advance();
         while (std::isdigit(peek())) advance();
@@ -258,7 +227,31 @@ void Lexer::scan_identifier(std::vector<Token>& tokens) {
     while (std::isalnum(peek()) || peek() == '_') advance();
     std::string word = source.substr(start, current - start);
     auto it = KEYWORDS.find(word);
-    TokenType type =
-        (it != KEYWORDS.end()) ? it->second : TokenType::IDENTIFIER;
+    TokenType type = (it != KEYWORDS.end()) ? it->second : TokenType::IDENTIFIER;
     add(tokens, type);
+}
+
+// ── Character navigation ──────────────────────────────────────────────────────
+
+bool Lexer::at_end()   { return current >= (int)source.size(); }
+char Lexer::peek()     { return at_end() ? '\0' : source[current]; }
+char Lexer::peek_next() {
+    return (current + 1 >= (int)source.size()) ? '\0' : source[current + 1];
+}
+
+char Lexer::advance() {
+    col++;
+    return source[current++];
+}
+
+bool Lexer::match(char expected) {
+    if (at_end() || source[current] != expected) return false;
+    col++;
+    current++;
+    return true;
+}
+
+void Lexer::add(std::vector<Token>& tokens, TokenType type) {
+    tokens.emplace_back(type, source.substr(start, current - start),
+                        line, start_col);
 }

@@ -1,0 +1,17 @@
+// Uncomment one block at a time to test error message formatting.
+// Each should print a source line + clear message.
+
+// --- Undefined variable ---
+// let result = x + 1
+
+// --- Division by zero ---
+// let n = 1 / 0
+
+// --- Call undefined function ---
+// frobnicate(42)
+
+// --- Field access on non-shape ---
+// let x = 10
+// print(x.name)
+
+print("No errors — uncomment a block above to test error messages")

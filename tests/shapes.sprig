@@ -1,0 +1,38 @@
+print("")
+
+// Define a shape
+shape Person:
+    name: text
+    age: number
+    active: flag
+
+// Create instances
+let sam = Person { name: "sam", age: 20, active: true }
+let alex = Person { name: "alex", age: 25, active: false }
+
+// Field access
+print(sam.name)
+print(sam.age)
+
+// Field update
+sam.age = 21
+print(sam.age)
+
+// Shape in a function
+define greet(person):
+    print("Hello " + person.name)
+    when person.active:
+        print("Account is active")
+    otherwise:
+        print("Account is inactive")
+
+greet(sam)
+greet(alex)
+
+// Shape in a list
+let people = [sam, alex]
+for each person in people:
+    print(person.name + " is " + to_text(person.age))
+
+// Print whole shape
+print(sam)

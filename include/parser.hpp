@@ -11,34 +11,43 @@ public:
     Program parse();
 
 private:
-    Token &peek();
-    Token &previous();
-    bool at_end();
-    Token &advance();
-    bool check(TokenType t);
-    bool match(TokenType t);
-    Token expect(TokenType t, const std::string &msg);
-    void skip_newlines();
+    // ── Navigation helpers ────────────────────────────────────────────────────
+
+    Token& peek();
+    Token& previous();
+    bool   at_end();
+    Token& advance();
+    Token& peek_at(int offset);   // non-consuming lookahead
+    bool   check(TokenType t);
+    bool   match(TokenType t);
+    Token  expect(TokenType t, const std::string& msg);
+    void   skip_newlines();
+
+    // ── Statements ────────────────────────────────────────────────────────────
 
     StatementPointer statement();
     StatementPointer variable_statement();
     StatementPointer function_statement();
+    StatementPointer shape_definition_statement();
+    StatementPointer field_assign_statement();
+    StatementPointer include_statement();
     StatementPointer if_statement();
-    StatementPointer return_statement();
-    StatementPointer expression_statement();
     StatementPointer while_statement();
     StatementPointer for_each_statement();
-    Block block();
+    StatementPointer return_statement();
+    StatementPointer expression_statement();
+    Block            block();
 
-    // One function per precedence level — mirrors the grammar exactly
+    // ── Expressions (descending precedence) ───────────────────────────────────
+
     ExpressionPointer expression();
+    ExpressionPointer logical_or();
+    ExpressionPointer logical_and();
+    ExpressionPointer logical_not();
     ExpressionPointer equality();
     ExpressionPointer comparison();
     ExpressionPointer term();
     ExpressionPointer factor();
-    ExpressionPointer call();
+    ExpressionPointer call();    // postfix: calls, indexing, field access
     ExpressionPointer primary();
-    ExpressionPointer logical_or();
-    ExpressionPointer logical_and();
-    ExpressionPointer logical_not();
 };
