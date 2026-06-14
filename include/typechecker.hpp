@@ -32,6 +32,9 @@ class TypeChecker {
     std::unordered_map<std::string,
         std::vector<std::pair<std::string, TypePtr>>> shape_types;
 
+    // Expression → resolved type, populated during infer_expression
+    ExprTypeMap expr_types;
+
     // Accumulated errors (checking continues after each error)
     std::vector<TypeError> errors;
 
@@ -49,6 +52,12 @@ public:
     std::vector<TypeError> check(const Program& program,
                                  const std::string& source,
                                  const std::string& file_path = "");
+
+    const ExprTypeMap& get_expr_types() const { return expr_types; }
+    const std::unordered_map<std::string,
+        std::vector<std::pair<std::string, TypePtr>>>& get_shape_types() const {
+        return shape_types;
+    }
 
 private:
     // ── Two-pass program processing ───────────────────────────────────────────

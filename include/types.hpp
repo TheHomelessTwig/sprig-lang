@@ -4,6 +4,8 @@
 #include <unordered_map>
 #include <vector>
 
+struct Expression;
+
 // ── Type representation ───────────────────────────────────────────────────────
 
 struct Type;
@@ -92,3 +94,5 @@ struct Type {
         return "unknown";
     }
 };
+
+using ExprTypeMap = std::unordered_map<const Expression*, TypePtr>;

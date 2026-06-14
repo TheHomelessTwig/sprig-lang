@@ -1,0 +1,42 @@
+// Full compiled-mode smoke test: lists, shapes, for each, field access
+
+shape Point:
+    x: number
+    y: number
+
+define make_point(px, py):
+    give back Point { x: px, y: py }
+
+// Shape instantiation and field access
+let p = make_point(3, 4)
+print("x: " + to_text(p.x))          // x: 3
+print("y: " + to_text(p.y))          // y: 4
+
+// List of numbers
+let mutable nums = [10, 20, 30]
+append(nums, 40)
+print(length(nums))                   // 4
+print(first(nums))                    // 10
+print(last(nums))                     // 40
+
+// for each loop
+let mutable total = 0
+for each n in nums:
+    let total = total + n
+print(total)                          // 100
+
+// Index access
+print(nums[1])                        // 20
+
+// List of text
+let words = ["hello", "world"]
+print(first(words))                   // hello
+print(length(words))                  // 2
+
+// stop and skip inside for each
+for each n in nums:
+    when n is 20:
+        skip
+    when n is 40:
+        stop
+    print(n)                          // 10, 30

@@ -89,7 +89,8 @@ int main(int argc, char* argv[]) {
         // ── Compile or interpret ──────────────────────────────────────────────
         if (compile_mode) {
             CodeGen codegen;
-            codegen.compile(program, output_file);
+            codegen.compile(program, checker.get_expr_types(),
+                            checker.get_shape_types(), output_file);
             std::cout << "Compiled to " << output_file << "\n";
             std::cout << "Build:  clang " << output_file
                       << " -o program -lm\n";

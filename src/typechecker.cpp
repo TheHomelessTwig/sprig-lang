@@ -212,25 +212,29 @@ TypePtr TypeChecker::instantiate(TypePtr t) {
 // ── Expression inference ──────────────────────────────────────────────────────
 
 TypePtr TypeChecker::infer_expression(const Expression* e) {
+    auto record = [&](TypePtr t) -> TypePtr {
+        expr_types[e] = resolve(t);
+        return t;
+    };
 
     // ── Literals ──────────────────────────────────────────────────────────────
 
-    if (dynamic_cast<const NumberExpression*>(e))  return Type::make_number();
-    if (dynamic_cast<const StringExpression*>(e))  return Type::make_text();
-    if (dynamic_cast<const BoolExpression*>(e))    return Type::make_flag();
-    if (dynamic_cast<const NothingExpression*>(e)) return Type::make_nothing();
+    if (dynamic_cast<const NumberExpression*>(e))  return record(Type::make_number());
+    if (dynamic_cast<const StringExpression*>(e))  return record(Type::make_text());
+    if (dynamic_cast<const BoolExpression*>(e))    return record(Type::make_flag());
+    if (dynamic_cast<const NothingExpression*>(e)) return record(Type::make_nothing());
 
     // ── Variable lookup ───────────────────────────────────────────────────────
 
     if (auto* i = dynamic_cast<const IdentExpression*>(e))
-        return lookup(i->name, i->line);
+        return record(lookup(i->name, i->line));
 
     // ── Borrow expressions ────────────────────────────────────────────────────
 
     if (auto* be = dynamic_cast<const BorrowExpression*>(e))
-        return lookup(be->source, be->line);
+        return record(lookup(be->source, be->line));
     if (auto* mbe = dynamic_cast<const MutableBorrowExpression*>(e))
-        return lookup(mbe->source, mbe->line);
+        return record(lookup(mbe->source, mbe->line));
 
     // ── Unary ─────────────────────────────────────────────────────────────────
 
@@ -238,9 +242,9 @@ TypePtr TypeChecker::infer_expression(const Expression* e) {
         TypePtr operand = infer_expression(u->operand.get());
         if (u->op == "not") {
             unify(operand, Type::make_flag(), 0);
-            return Type::make_flag();
+            return record(Type::make_flag());
         }
-        return fresh();
+        return record(fresh());
     }
 
     // ── Binary ────────────────────────────────────────────────────────────────
@@ -255,31 +259,31 @@ TypePtr TypeChecker::infer_expression(const Expression* e) {
             TypePtr rlt = resolve(lt);
             TypePtr rrt = resolve(rt);
             if (rlt->kind == Type::Kind::Text || rrt->kind == Type::Kind::Text)
-                return Type::make_text();
+                return record(Type::make_text());
             unify(lt, Type::make_number(), bin->line);
             unify(rt, Type::make_number(), bin->line);
-            return Type::make_number();
+            return record(Type::make_number());
         }
         if (bin->op == "-" || bin->op == "*" || bin->op == "/") {
             unify(lt, Type::make_number(), bin->line);
             unify(rt, Type::make_number(), bin->line);
-            return Type::make_number();
+            return record(Type::make_number());
         }
         if (bin->op == ">" || bin->op == "<") {
             unify(lt, Type::make_number(), bin->line);
             unify(rt, Type::make_number(), bin->line);
-            return Type::make_flag();
+            return record(Type::make_flag());
         }
         if (bin->op == "==" || bin->op == "!=") {
             unify(lt, rt, bin->line);
-            return Type::make_flag();
+            return record(Type::make_flag());
         }
         if (bin->op == "and" || bin->op == "or") {
             unify(lt, Type::make_flag(), bin->line);
             unify(rt, Type::make_flag(), bin->line);
-            return Type::make_flag();
+            return record(Type::make_flag());
         }
-        return fresh();
+        return record(fresh());
     }
 
     // ── Function call ─────────────────────────────────────────────────────────
@@ -293,7 +297,7 @@ TypePtr TypeChecker::infer_expression(const Expression* e) {
 
         TypePtr ret = fresh();
         unify(fn_type, Type::make_function(std::move(arg_types), ret), c->line);
-        return resolve(ret);
+        return record(resolve(ret));
     }
 
     // ── List ──────────────────────────────────────────────────────────────────
@@ -302,7 +306,7 @@ TypePtr TypeChecker::infer_expression(const Expression* e) {
         TypePtr elem = fresh();
         for (auto& el : le->elements)
             unify(elem, infer_expression(el.get()), 0);
-        return Type::make_list(elem);
+        return record(Type::make_list(resolve(elem)));
     }
 
     // collection[i]
@@ -312,7 +316,7 @@ TypePtr TypeChecker::infer_expression(const Expression* e) {
         TypePtr elem = fresh();
         unify(idx, Type::make_number(), 0);
         unify(obj, Type::make_list(elem), 0);
-        return resolve(elem);
+        return record(resolve(elem));
     }
 
     // ── Shape ─────────────────────────────────────────────────────────────────
@@ -324,16 +328,15 @@ TypePtr TypeChecker::infer_expression(const Expression* e) {
             auto it = shape_types.find(obj->shape_name);
             if (it != shape_types.end()) {
                 for (auto& [fname, ftype] : it->second)
-                    if (fname == fa->field) return ftype;
+                    if (fname == fa->field) return record(ftype);
                 error("Shape '" + obj->shape_name +
                       "' has no field '" + fa->field + "'", fa->line);
             }
         } else if (obj->kind != Type::Kind::Var) {
-            // Only error when the type is known — avoid spurious errors on unknowns
             error("Cannot access field on non-shape type '" +
                   obj->to_string() + "'", fa->line);
         }
-        return fresh();
+        return record(fresh());
     }
 
     // Person { name: "sam", age: 20 }
@@ -341,17 +344,17 @@ TypePtr TypeChecker::infer_expression(const Expression* e) {
         auto it = shape_types.find(si->shape_name);
         if (it == shape_types.end()) {
             error("Unknown shape '" + si->shape_name + "'", 0);
-            return fresh();
+            return record(fresh());
         }
         for (auto& [fname, fexpr] : si->fields) {
             TypePtr actual = infer_expression(fexpr.get());
             for (auto& [def_name, def_type] : it->second)
                 if (def_name == fname) { unify(actual, def_type, 0); break; }
         }
-        return Type::make_shape(si->shape_name);
+        return record(Type::make_shape(si->shape_name));
     }
 
-    return fresh();
+    return record(fresh());
 }
 
 // ── Statement checking ────────────────────────────────────────────────────────
