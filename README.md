@@ -345,13 +345,21 @@ include/
   interpreter.hpp    — Value, Environment, Interpreter
   codegen.hpp        — CodeGen
 tests/
-  hello.sprig        — lists and functions
-  shapes.sprig       — shape types and field mutation
-  ownership.sprig    — borrow checker demo
-  pointers.sprig     — raw pointer and own<T> demo
-  builtins.sprig     — string/file/args built-ins
-  compiled.sprig     — compiler smoke test
+  hello.sprig         — lists and functions
+  shapes.sprig        — shape types and field mutation
+  types.sprig         — type inference examples
+  mutability.sprig    — mutability rules and rebinding
+  ownership.sprig     — borrow checker demo
+  pointers.sprig      — raw pointer and own<T> demo
+  builtins.sprig      — string/file/args built-ins
+  input.sprig         — stdin input demo
+  guess.sprig         — number guessing game
+  errors.sprig        — error message formatting tests (blocks commented out)
+  compiled.sprig      — compiler smoke test
   compiled_full.sprig — compiled-mode full feature test
+  include/
+    main.sprig        — multi-file include demo entry point
+    utils.sprig       — shared utilities for include demo
 ```
 
 ## Editor support
