@@ -310,6 +310,7 @@ Value Interpreter::eval_expression(const Expression* e, Environment& env) {
     if (auto* unary_expr = dynamic_cast<const UnaryExpression*>(e)) {
         Value operand = eval_expression(unary_expr->operand.get(), env);
         if (unary_expr->op == "not") return Value::make_bool(!operand.is_truthy());
+        if (unary_expr->op == "-")   return Value::make_number(-operand.number);
         throw std::runtime_error("Unknown unary operator: " + unary_expr->op);
     }
 

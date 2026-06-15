@@ -767,6 +767,7 @@ llvm::Value* CodeGen::gen_expr(const Expression* e) {
     if (auto* unary_expr = dynamic_cast<const UnaryExpression*>(e)) {
         auto* operand_value = gen_expr(unary_expr->operand.get());
         if (unary_expr->op == "not") return builder->CreateNot(to_bool(operand_value), "not");
+        if (unary_expr->op == "-")   return builder->CreateFNeg(operand_value, "neg");
         throw std::runtime_error("Unknown unary operator: " + unary_expr->op);
     }
 

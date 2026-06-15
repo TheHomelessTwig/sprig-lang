@@ -50,6 +50,7 @@ private:
     ExpressionPointer comparison();
     ExpressionPointer term();
     ExpressionPointer factor();
+    ExpressionPointer unary();   // prefix: -expr
     ExpressionPointer call();    // postfix: calls, indexing, field access
     ExpressionPointer primary();
 };

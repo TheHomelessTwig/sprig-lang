@@ -341,14 +341,23 @@ ExpressionPointer Parser::term() {
 
 // * / /
 ExpressionPointer Parser::factor() {
-    ExpressionPointer left = call();
+    ExpressionPointer left = unary();
     while (check(TokenType::STAR) || check(TokenType::SLASH)) {
         std::string op      = advance().lexeme;
         int         op_line = previous().line;
         left = std::make_unique<BinaryExpression>(
-            std::move(left), op, call(), op_line);
+            std::move(left), op, unary(), op_line);
     }
     return left;
+}
+
+// Prefix: -expr
+ExpressionPointer Parser::unary() {
+    if (check(TokenType::MINUS)) {
+        advance();
+        return std::make_unique<UnaryExpression>("-", unary());
+    }
+    return call();
 }
 
 // Postfix operators: function calls f(...), index access a[i], field access a.f

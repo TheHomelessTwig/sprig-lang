@@ -268,6 +268,10 @@ TypePtr TypeChecker::infer_expression(const Expression* e) {
             unify(operand, Type::make_flag(), 0);
             return record(Type::make_flag());
         }
+        if (unary_expr->op == "-") {
+            unify(operand, Type::make_number(), 0);
+            return record(Type::make_number());
+        }
         return record(fresh());
     }
 
