@@ -1,0 +1,39 @@
+include "src/sprig_compiler/lexer.sprig"
+include "src/sprig_compiler/parser.sprig"
+
+// Walk a single node and print it
+define print_node(node_id, depth):
+    when node_id < 0: give back nothing
+    let nd = g_nodes[node_id]
+    // Build indent string
+    let ind = StrRef { s: "" }
+    let cnt = NodeRef { id: 0 }
+    as long as cnt.id < depth:
+        ind.s = ind.s + "  "
+        cnt.id = cnt.id + 1
+    // Print this node
+    let summary = StrRef { s: ind.s + nd.kind }
+    when not (nd.name is ""):    summary.s = summary.s + " name=" + nd.name
+    when not (nd.op is ""):      summary.s = summary.s + " op=" + nd.op
+    when not (nd.str_val is ""): summary.s = summary.s + " str=" + nd.str_val
+    when nd.kind is "number":    summary.s = summary.s + " num=" + to_text(nd.num_val)
+    when nd.kind is "bool":      summary.s = summary.s + " flag=" + to_text(nd.flag_val)
+    print(summary.s)
+    // Recurse into children (not next — caller handles siblings)
+    print_node(nd.child1, depth + 1)
+    print_node(nd.child2, depth + 1)
+    print_node(nd.child3, depth + 1)
+
+// Walk top-level statement list
+define print_ast(first_id):
+    let cur = NodeRef { id: first_id }
+    as long as cur.id >= 0:
+        let nd = g_nodes[cur.id]
+        print_node(cur.id, 0)
+        cur.id = nd.next
+
+let source = read_file(args_get(2))
+let tokens = tokenize(source)
+let first_stmt = parse(tokens)
+print("=== AST (" + to_text(length(g_nodes)) + " nodes) ===")
+print_ast(first_stmt)

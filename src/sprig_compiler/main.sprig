@@ -1,0 +1,18 @@
+include "src/sprig_compiler/lexer.sprig"
+include "src/sprig_compiler/parser.sprig"
+include "src/sprig_compiler/codegen.sprig"
+
+when args_count() < 3:
+    print("Usage: sprig src/sprig_compiler/main.sprig <input.sprig> <output.c>")
+    exit(1)
+
+let input_path  = args_get(2)
+let output_path = args_get(3)
+
+let source      = read_file(input_path)
+let tokens      = tokenize(source)
+let first_stmt  = parse(tokens)
+let c_source    = codegen(first_stmt)
+
+write_file(output_path, c_source)
+print("Compiled " + input_path + " -> " + output_path)

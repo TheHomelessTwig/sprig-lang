@@ -1,0 +1,8 @@
+include "src/sprig_compiler/lexer.sprig"
+
+let source = read_file(args_get(1))
+let tokens = tokenize(source)
+
+for each tok in tokens:
+    when not (tok.kind is "INDENT_HINT"):
+        print(tok.kind + "  |  " + tok.value)

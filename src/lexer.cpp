@@ -147,7 +147,7 @@ static std::vector<Token> insert_indent_tokens(std::vector<Token> tokens) {
 
 // ── Lexer methods ─────────────────────────────────────────────────────────────
 
-Lexer::Lexer(std::string src) : source(std::move(src)) {}
+Lexer::Lexer(std::string source) : source(std::move(source)) {}
 
 std::vector<Token> Lexer::tokenize() {
     std::vector<Token> tokens;
@@ -162,8 +162,8 @@ std::vector<Token> Lexer::tokenize() {
 }
 
 void Lexer::scan_token(std::vector<Token>& tokens) {
-    char c = advance();
-    switch (c) {
+    char ch = advance();
+    switch (ch) {
         // Single-character delimiters
         case '(': add(tokens, TokenType::LPAREN);   break;
         case ')': add(tokens, TokenType::RPAREN);   break;
@@ -210,9 +210,9 @@ void Lexer::scan_token(std::vector<Token>& tokens) {
         case '"': scan_string(tokens); break;
 
         default:
-            if (std::isdigit(c))
+            if (std::isdigit(ch))
                 scan_number(tokens);
-            else if (std::isalpha(c) || c == '_')
+            else if (std::isalpha(ch) || ch == '_')
                 scan_identifier(tokens);
             else
                 add(tokens, TokenType::ILLEGAL);

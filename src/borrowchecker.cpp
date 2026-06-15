@@ -123,17 +123,17 @@ void BorrowChecker::release_borrows(const std::string& borrow_name) {
 
 // ── Statement checking ────────────────────────────────────────────────────────
 
-void BorrowChecker::check_statement(const Statement* s) {
+void BorrowChecker::check_statement(const Statement* stmt) {
 
     // let [mutable] x = expr
-    if (auto* variable_stmt = dynamic_cast<const VariableStatement*>(s)) {
+    if (auto* variable_stmt = dynamic_cast<const VariableStatement*>(stmt)) {
         check_expression(variable_stmt->value.get());
         declare(variable_stmt->name, OwnershipState::Owned);
         return;
     }
 
     // let x borrow y — x is the reference (Owned/usable), y is locked as Borrowed
-    if (auto* borrow_stmt = dynamic_cast<const BorrowStatement*>(s)) {
+    if (auto* borrow_stmt = dynamic_cast<const BorrowStatement*>(stmt)) {
         check_borrowable(borrow_stmt->source, borrow_stmt->line);
         auto* src_state = lookup(borrow_stmt->source);
         if (src_state) {
@@ -146,7 +146,7 @@ void BorrowChecker::check_statement(const Statement* s) {
     }
 
     // let x borrow mutable y — x is usable, y is locked as MutBorrowed
-    if (auto* mutable_borrow_stmt = dynamic_cast<const MutableBorrowStatement*>(s)) {
+    if (auto* mutable_borrow_stmt = dynamic_cast<const MutableBorrowStatement*>(stmt)) {
         check_mut_borrowable(mutable_borrow_stmt->source, mutable_borrow_stmt->line);
         auto* src_state = lookup(mutable_borrow_stmt->source);
         if (src_state) *src_state = OwnershipState::MutBorrowed;
@@ -156,13 +156,13 @@ void BorrowChecker::check_statement(const Statement* s) {
     }
 
     // give back expr
-    if (auto* return_stmt = dynamic_cast<const ReturnStatement*>(s)) {
+    if (auto* return_stmt = dynamic_cast<const ReturnStatement*>(stmt)) {
         check_expression(return_stmt->value.get());
         return;
     }
 
     // define f(params): body
-    if (auto* function_stmt = dynamic_cast<const FunctionStatement*>(s)) {
+    if (auto* function_stmt = dynamic_cast<const FunctionStatement*>(stmt)) {
         push_scope();
         for (auto& param : function_stmt->params)
             declare(param, OwnershipState::Owned);
@@ -172,7 +172,7 @@ void BorrowChecker::check_statement(const Statement* s) {
     }
 
     // when cond: ...
-    if (auto* if_stmt = dynamic_cast<const IfStatement*>(s)) {
+    if (auto* if_stmt = dynamic_cast<const IfStatement*>(stmt)) {
         check_expression(if_stmt->condition.get());
         check_block(if_stmt->then_block);
         if (if_stmt->else_block) check_block(*if_stmt->else_block);
@@ -180,14 +180,14 @@ void BorrowChecker::check_statement(const Statement* s) {
     }
 
     // as long as cond: ...
-    if (auto* while_stmt = dynamic_cast<const WhileStatement*>(s)) {
+    if (auto* while_stmt = dynamic_cast<const WhileStatement*>(stmt)) {
         check_expression(while_stmt->condition.get());
         check_block(while_stmt->body);
         return;
     }
 
     // for each x in list: ...
-    if (auto* for_each_stmt = dynamic_cast<const ForEachStatement*>(s)) {
+    if (auto* for_each_stmt = dynamic_cast<const ForEachStatement*>(stmt)) {
         check_expression(for_each_stmt->iterable.get());
         push_scope();
         declare(for_each_stmt->variable, OwnershipState::Owned);
@@ -197,20 +197,20 @@ void BorrowChecker::check_statement(const Statement* s) {
     }
 
     // sam.field = val
-    if (auto* field_assign_stmt = dynamic_cast<const FieldAssignStatement*>(s)) {
+    if (auto* field_assign_stmt = dynamic_cast<const FieldAssignStatement*>(stmt)) {
         check_readable(field_assign_stmt->variable, field_assign_stmt->line);
         check_expression(field_assign_stmt->value.get());
         return;
     }
 
     // standalone expression
-    if (auto* expr_stmt = dynamic_cast<const ExpressionStatement*>(s)) {
+    if (auto* expr_stmt = dynamic_cast<const ExpressionStatement*>(stmt)) {
         check_expression(expr_stmt->expr.get());
         return;
     }
 
     // unsafe: — borrow rules still apply inside
-    if (auto* unsafe_stmt = dynamic_cast<const UnsafeStatement*>(s)) {
+    if (auto* unsafe_stmt = dynamic_cast<const UnsafeStatement*>(stmt)) {
         check_block(unsafe_stmt->body);
         return;
     }
@@ -218,82 +218,82 @@ void BorrowChecker::check_statement(const Statement* s) {
     // shape / include / stop / skip — no ownership concerns
 }
 
-void BorrowChecker::check_block(const Block& b) {
+void BorrowChecker::check_block(const Block& block) {
     push_scope();
-    for (auto& stmt : b.stmts)
+    for (auto& stmt : block.stmts)
         check_statement(stmt.get());
     pop_scope();
 }
 
 // ── Expression checking ───────────────────────────────────────────────────────
 
-void BorrowChecker::check_expression(const Expression* e) {
+void BorrowChecker::check_expression(const Expression* expr) {
 
     // Variable read — must not be moved or mut-borrowed
-    if (auto* ident_expr = dynamic_cast<const IdentExpression*>(e)) {
+    if (auto* ident_expr = dynamic_cast<const IdentExpression*>(expr)) {
         check_readable(ident_expr->name, ident_expr->line);
         return;
     }
 
     // borrow x — transient immutable borrow (function argument); just check validity
-    if (auto* borrow_expr = dynamic_cast<const BorrowExpression*>(e)) {
+    if (auto* borrow_expr = dynamic_cast<const BorrowExpression*>(expr)) {
         check_borrowable(borrow_expr->source, borrow_expr->line);
         return;
     }
 
     // borrow mutable x — transient mutable borrow; just check validity
-    if (auto* mutable_borrow_expr = dynamic_cast<const MutableBorrowExpression*>(e)) {
+    if (auto* mutable_borrow_expr = dynamic_cast<const MutableBorrowExpression*>(expr)) {
         check_mut_borrowable(mutable_borrow_expr->source, mutable_borrow_expr->line);
         return;
     }
 
     // Function call — borrow args are handled above; ident args are reads
-    if (auto* call_expr = dynamic_cast<const CallExpression*>(e)) {
+    if (auto* call_expr = dynamic_cast<const CallExpression*>(expr)) {
         for (auto& arg : call_expr->args)
             check_expression(arg.get());
         return;
     }
 
     // Binary / unary — recurse
-    if (auto* binary_expr = dynamic_cast<const BinaryExpression*>(e)) {
+    if (auto* binary_expr = dynamic_cast<const BinaryExpression*>(expr)) {
         check_expression(binary_expr->left.get());
         check_expression(binary_expr->right.get());
         return;
     }
-    if (auto* unary_expr = dynamic_cast<const UnaryExpression*>(e)) {
+    if (auto* unary_expr = dynamic_cast<const UnaryExpression*>(expr)) {
         check_expression(unary_expr->operand.get());
         return;
     }
 
     // Index — check object and index
-    if (auto* index_expr = dynamic_cast<const IndexExpression*>(e)) {
+    if (auto* index_expr = dynamic_cast<const IndexExpression*>(expr)) {
         check_expression(index_expr->object.get());
         check_expression(index_expr->index.get());
         return;
     }
 
     // Field access
-    if (auto* field_access_expr = dynamic_cast<const FieldAccessExpression*>(e)) {
+    if (auto* field_access_expr = dynamic_cast<const FieldAccessExpression*>(expr)) {
         check_expression(field_access_expr->object.get());
         return;
     }
 
     // List literal
-    if (auto* list_expr = dynamic_cast<const ListExpression*>(e)) {
+    if (auto* list_expr = dynamic_cast<const ListExpression*>(expr)) {
         for (auto& element : list_expr->elements)
             check_expression(element.get());
         return;
     }
 
     // Shape instantiation
-    if (auto* shape_instance_expr = dynamic_cast<const ShapeInstanceExpression*>(e)) {
+    if (auto* shape_instance_expr = dynamic_cast<const ShapeInstanceExpression*>(expr)) {
         for (auto& [field_name, field_expr] : shape_instance_expr->fields)
             check_expression(field_expr.get());
         return;
     }
 
     // own expr — inner value consumed into heap allocation
-    if (auto* own_expr = dynamic_cast<const OwnExpression*>(e)) {
+    if (auto* own_expr = dynamic_cast<const OwnExpression*>(expr)) {
         check_expression(own_expr->inner.get());
         return;
     }

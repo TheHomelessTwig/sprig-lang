@@ -198,9 +198,9 @@ private:
     //   <message>
     std::string make_error(const std::string& msg, int line) const;
 
-    void  eval_block(const Block& b, Environment& env);
-    void  eval_statement(const Statement* s, Environment& env);
-    Value eval_expression(const Expression* e, Environment& env);
+    void  eval_block(const Block& block, Environment& env);
+    void  eval_statement(const Statement* stmt, Environment& env);
+    Value eval_expression(const Expression* expr, Environment& env);
     Value call_function(const std::string& name,
                         const std::vector<Value>& args, int line);
 };

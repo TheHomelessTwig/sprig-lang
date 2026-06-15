@@ -59,22 +59,23 @@ Program Parser::parse() {
 Block Parser::block() {
     expect(TokenType::COLON, "Expected ':'");
 
+    // Single-line block: 'when cond: stmt' without a newline
     if (!check(TokenType::NEWLINE) && !at_end()) {
-        Block b;
-        b.stmts.push_back(statement());
-        return b;
+        Block result_block;
+        result_block.stmts.push_back(statement());
+        return result_block;
     }
 
     expect(TokenType::NEWLINE, "Expected newline after ':'");
     expect(TokenType::INDENT,  "Expected indented block");
-    Block b;
+    Block result_block;
     while (!check(TokenType::DEDENT) && !at_end()) {
         skip_newlines();
         if (check(TokenType::DEDENT) || at_end()) break;
-        b.stmts.push_back(statement());
+        result_block.stmts.push_back(statement());
     }
     expect(TokenType::DEDENT, "Expected end of block");
-    return b;
+    return result_block;
 }
 
 // ── Statement parsers ─────────────────────────────────────────────────────────
@@ -266,9 +267,9 @@ StatementPointer Parser::unsafe_statement() {
 
 // Bare expression used as a statement (typically a function call)
 StatementPointer Parser::expression_statement() {
-    ExpressionPointer e = expression();
+    ExpressionPointer expr_node = expression();
     match(TokenType::NEWLINE);
-    return std::make_unique<ExpressionStatement>(std::move(e));
+    return std::make_unique<ExpressionStatement>(std::move(expr_node));
 }
 
 // ── Expression parsers (descending precedence) ────────────────────────────────
@@ -372,10 +373,10 @@ ExpressionPointer Parser::unary() {
 
 // Postfix operators: function calls f(...), index access a[i], field access a.f
 ExpressionPointer Parser::call() {
-    ExpressionPointer expr = primary();
+    ExpressionPointer expr_node = primary();
     while (true) {
         if (check(TokenType::LPAREN)) {
-            auto* ident = dynamic_cast<IdentExpression*>(expr.get());
+            auto* ident = dynamic_cast<IdentExpression*>(expr_node.get());
             if (!ident)
                 throw std::runtime_error("Can only call named functions");
             std::string callee    = ident->name;
@@ -392,23 +393,23 @@ ExpressionPointer Parser::call() {
             }
             skip_structure();
             expect(TokenType::RPAREN, "Expected ')'");
-            expr = std::make_unique<CallExpression>(
+            expr_node = std::make_unique<CallExpression>(
                 callee, std::move(args), call_line);
         } else if (check(TokenType::LBRACKET)) {
             advance();
             ExpressionPointer index = expression();
             expect(TokenType::RBRACKET, "Expected ']'");
-            expr = std::make_unique<IndexExpression>(
-                std::move(expr), std::move(index));
+            expr_node = std::make_unique<IndexExpression>(
+                std::move(expr_node), std::move(index));
         } else if (match(TokenType::DOT)) {
             Token field = expect(TokenType::IDENTIFIER, "Expected field name after '.'");
-            expr = std::make_unique<FieldAccessExpression>(
-                std::move(expr), field.lexeme, field.line);
+            expr_node = std::make_unique<FieldAccessExpression>(
+                std::move(expr_node), field.lexeme, field.line);
         } else {
             break;
         }
     }
-    return expr;
+    return expr_node;
 }
 
 ExpressionPointer Parser::primary() {
@@ -475,9 +476,9 @@ ExpressionPointer Parser::primary() {
         return std::make_unique<IdentExpression>(previous().lexeme, previous().line);
 
     if (match(TokenType::LPAREN)) {
-        ExpressionPointer e = expression();
+        ExpressionPointer grouped = expression();
         expect(TokenType::RPAREN, "Expected ')'");
-        return e;
+        return grouped;
     }
 
     if (match(TokenType::LBRACKET)) {

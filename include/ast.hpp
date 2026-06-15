@@ -19,15 +19,15 @@ struct Statement  { virtual ~Statement()  = default; };
 // Literals (no line needed — literal type errors are parse-time, not runtime)
 struct NumberExpression : Expression {
     double value;
-    NumberExpression(double v) : value(v) {}
+    NumberExpression(double val) : value(val) {}
 };
 struct StringExpression : Expression {
     std::string value;
-    StringExpression(std::string v) : value(std::move(v)) {}
+    StringExpression(std::string val) : value(std::move(val)) {}
 };
 struct BoolExpression : Expression {
     bool value;
-    BoolExpression(bool v) : value(v) {}
+    BoolExpression(bool val) : value(val) {}
 };
 struct NothingExpression : Expression {};
 
@@ -35,7 +35,7 @@ struct NothingExpression : Expression {};
 struct IdentExpression : Expression {
     std::string name;
     int         line;
-    IdentExpression(std::string n, int ln) : name(std::move(n)), line(ln) {}
+    IdentExpression(std::string name_str, int line_number) : name(std::move(name_str)), line(line_number) {}
 };
 
 // Operations — line on binary for division-by-zero and operator errors
@@ -44,10 +44,10 @@ struct BinaryExpression : Expression {
     std::string       op;
     ExpressionPointer right;
     int               line;
-    BinaryExpression(ExpressionPointer l, std::string op,
-                     ExpressionPointer r, int ln)
-        : left(std::move(l)), op(std::move(op)),
-          right(std::move(r)), line(ln) {}
+    BinaryExpression(ExpressionPointer left_expr, std::string op,
+                     ExpressionPointer right_expr, int line_number)
+        : left(std::move(left_expr)), op(std::move(op)),
+          right(std::move(right_expr)), line(line_number) {}
 };
 struct UnaryExpression : Expression {
     std::string       op;
@@ -61,14 +61,14 @@ struct CallExpression : Expression {
     std::string                    callee;
     std::vector<ExpressionPointer> args;
     int                            line;
-    CallExpression(std::string c, std::vector<ExpressionPointer> a, int ln)
-        : callee(std::move(c)), args(std::move(a)), line(ln) {}
+    CallExpression(std::string callee_name, std::vector<ExpressionPointer> arg_list, int line_number)
+        : callee(std::move(callee_name)), args(std::move(arg_list)), line(line_number) {}
 };
 
 // List literal: [a, b, c]
 struct ListExpression : Expression {
     std::vector<ExpressionPointer> elements;
-    ListExpression(std::vector<ExpressionPointer> e) : elements(std::move(e)) {}
+    ListExpression(std::vector<ExpressionPointer> elems) : elements(std::move(elems)) {}
 };
 
 // Index access: collection[i]
@@ -84,9 +84,9 @@ struct ShapeInstanceExpression : Expression {
     std::string shape_name;
     std::vector<std::pair<std::string, ExpressionPointer>> fields;
     ShapeInstanceExpression(
-        std::string n,
-        std::vector<std::pair<std::string, ExpressionPointer>> f)
-        : shape_name(std::move(n)), fields(std::move(f)) {}
+        std::string name,
+        std::vector<std::pair<std::string, ExpressionPointer>> field_list)
+        : shape_name(std::move(name)), fields(std::move(field_list)) {}
 };
 
 // Field read: sam.name — line for "no such field" errors
@@ -94,8 +94,8 @@ struct FieldAccessExpression : Expression {
     ExpressionPointer object;
     std::string       field;
     int               line;
-    FieldAccessExpression(ExpressionPointer obj, std::string f, int ln)
-        : object(std::move(obj)), field(std::move(f)), line(ln) {}
+    FieldAccessExpression(ExpressionPointer obj, std::string field_name, int line_number)
+        : object(std::move(obj)), field(std::move(field_name)), line(line_number) {}
 };
 
 // ── Statements ────────────────────────────────────────────────────────────────
@@ -110,21 +110,21 @@ struct VariableStatement : Statement {
     ExpressionPointer value;
     bool              is_mutable; // true when declared with 'let mutable'
     int               line;
-    VariableStatement(std::string n, ExpressionPointer v, bool mut, int ln)
-        : name(std::move(n)), value(std::move(v)),
-          is_mutable(mut), line(ln) {}
+    VariableStatement(std::string name, ExpressionPointer val, bool is_mutable, int line_number)
+        : name(std::move(name)), value(std::move(val)),
+          is_mutable(is_mutable), line(line_number) {}
 };
 
 // give back expr
 struct ReturnStatement : Statement {
     ExpressionPointer value;
-    ReturnStatement(ExpressionPointer v) : value(std::move(v)) {}
+    ReturnStatement(ExpressionPointer val) : value(std::move(val)) {}
 };
 
 // Bare expression used as a statement (e.g. a print() call)
 struct ExpressionStatement : Statement {
     ExpressionPointer expr;
-    ExpressionStatement(ExpressionPointer e) : expr(std::move(e)) {}
+    ExpressionStatement(ExpressionPointer expression) : expr(std::move(expression)) {}
 };
 
 // when cond: ... [otherwise: ...]
@@ -132,10 +132,10 @@ struct IfStatement : Statement {
     ExpressionPointer    condition;
     Block                then_block;
     std::optional<Block> else_block;
-    IfStatement(ExpressionPointer c, Block t, std::optional<Block> e)
-        : condition(std::move(c)),
-          then_block(std::move(t)),
-          else_block(std::move(e)) {}
+    IfStatement(ExpressionPointer cond, Block then_blk, std::optional<Block> else_blk)
+        : condition(std::move(cond)),
+          then_block(std::move(then_blk)),
+          else_block(std::move(else_blk)) {}
 };
 
 // define name(params): body
@@ -143,16 +143,16 @@ struct FunctionStatement : Statement {
     std::string              name;
     std::vector<std::string> params;
     Block                    body;
-    FunctionStatement(std::string n, std::vector<std::string> p, Block b)
-        : name(std::move(n)), params(std::move(p)), body(std::move(b)) {}
+    FunctionStatement(std::string name, std::vector<std::string> params, Block body)
+        : name(std::move(name)), params(std::move(params)), body(std::move(body)) {}
 };
 
 // as long as cond: body
 struct WhileStatement : Statement {
     ExpressionPointer condition;
     Block             body;
-    WhileStatement(ExpressionPointer c, Block b)
-        : condition(std::move(c)), body(std::move(b)) {}
+    WhileStatement(ExpressionPointer cond, Block body)
+        : condition(std::move(cond)), body(std::move(body)) {}
 };
 
 // for each x in list: body
@@ -180,8 +180,8 @@ struct ShapeField {
 struct ShapeDefinitionStatement : Statement {
     std::string              name;
     std::vector<ShapeField>  fields;
-    ShapeDefinitionStatement(std::string n, std::vector<ShapeField> f)
-        : name(std::move(n)), fields(std::move(f)) {}
+    ShapeDefinitionStatement(std::string name, std::vector<ShapeField> fields)
+        : name(std::move(name)), fields(std::move(fields)) {}
 };
 
 // sam.age = 21  — mutates field through shared_ptr so all copies see the change
@@ -190,18 +190,18 @@ struct FieldAssignStatement : Statement {
     std::string       field;
     ExpressionPointer value;
     int               line;
-    FieldAssignStatement(std::string var, std::string f,
-                         ExpressionPointer v, int ln)
-        : variable(std::move(var)), field(std::move(f)),
-          value(std::move(v)), line(ln) {}
+    FieldAssignStatement(std::string var, std::string field_name,
+                         ExpressionPointer val, int line_number)
+        : variable(std::move(var)), field(std::move(field_name)),
+          value(std::move(val)), line(line_number) {}
 };
 
 // include "path/to/file.sprig"  — runs the file in the current interpreter context
 struct IncludeStatement : Statement {
     std::string path;
     int         line;
-    IncludeStatement(std::string p, int ln)
-        : path(std::move(p)), line(ln) {}
+    IncludeStatement(std::string path, int line_number)
+        : path(std::move(path)), line(line_number) {}
 };
 
 // own expr — heap-allocates expr with unique ownership (Box<T>)
@@ -215,7 +215,7 @@ struct OwnExpression : Expression {
 // unsafe: block — permits raw pointer operations inside
 struct UnsafeStatement : Statement {
     Block body;
-    UnsafeStatement(Block b) : body(std::move(b)) {}
+    UnsafeStatement(Block body) : body(std::move(body)) {}
 };
 
 // let x borrow y  — immutable borrow binding
@@ -223,8 +223,8 @@ struct BorrowStatement : Statement {
     std::string target;
     std::string source;
     int         line;
-    BorrowStatement(std::string t, std::string s, int ln)
-        : target(std::move(t)), source(std::move(s)), line(ln) {}
+    BorrowStatement(std::string target, std::string source, int line_number)
+        : target(std::move(target)), source(std::move(source)), line(line_number) {}
 };
 
 // let x borrow mutable y  — mutable borrow binding
@@ -232,24 +232,24 @@ struct MutableBorrowStatement : Statement {
     std::string target;
     std::string source;
     int         line;
-    MutableBorrowStatement(std::string t, std::string s, int ln)
-        : target(std::move(t)), source(std::move(s)), line(ln) {}
+    MutableBorrowStatement(std::string target, std::string source, int line_number)
+        : target(std::move(target)), source(std::move(source)), line(line_number) {}
 };
 
 // borrow x  — immutable borrow expression (for function arguments)
 struct BorrowExpression : Expression {
     std::string source;
     int         line;
-    BorrowExpression(std::string s, int ln)
-        : source(std::move(s)), line(ln) {}
+    BorrowExpression(std::string source, int line_number)
+        : source(std::move(source)), line(line_number) {}
 };
 
 // borrow mutable x  — mutable borrow expression
 struct MutableBorrowExpression : Expression {
     std::string source;
     int         line;
-    MutableBorrowExpression(std::string s, int ln)
-        : source(std::move(s)), line(ln) {}
+    MutableBorrowExpression(std::string source, int line_number)
+        : source(std::move(source)), line(line_number) {}
 };
 
 // ── Program root ──────────────────────────────────────────────────────────────

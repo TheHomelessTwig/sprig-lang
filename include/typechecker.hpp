@@ -87,9 +87,9 @@ private:
 
     // ── Inference / checking ──────────────────────────────────────────────────
 
-    TypePtr infer_expression(const Expression* e);
-    void    check_statement(const Statement* s, TypePtr return_type);
-    void    check_block(const Block& b, TypePtr return_type);
+    TypePtr infer_expression(const Expression* expr);
+    void    check_statement(const Statement* stmt, TypePtr return_type);
+    void    check_block(const Block& block, TypePtr return_type);
 
     // ── Error helpers ─────────────────────────────────────────────────────────
 

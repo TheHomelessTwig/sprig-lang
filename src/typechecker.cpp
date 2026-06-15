@@ -203,66 +203,68 @@ void TypeChecker::unify(TypePtr a, TypePtr b, int line) {
 
 // ── Instantiation ─────────────────────────────────────────────────────────────
 
-// Replace all unbound type variables in t with fresh ones, using a mapping so
-// the same var ID always maps to the same fresh var within one instantiation.
+// Replace all unbound type variables in 'type' with fresh ones, using a mapping
+// so the same var ID always maps to the same fresh var within one instantiation.
 // This gives each call site its own copy of a polymorphic function's type.
 TypePtr TypeChecker::instantiate(TypePtr type) {
-    std::unordered_map<int, TypePtr> mapping;
-    std::function<TypePtr(TypePtr)> go = [&](TypePtr t) -> TypePtr {
-        t = resolve(t);
-        switch (t->kind) {
+    std::unordered_map<int, TypePtr> var_mapping;
+    // Recursively substitute free type variables — identical IDs get the same fresh var.
+    std::function<TypePtr(TypePtr)> walk = [&](TypePtr node) -> TypePtr {
+        node = resolve(node);
+        switch (node->kind) {
             case Type::Kind::Var: {
-                auto var_entry = mapping.find(t->var_id);
-                if (var_entry != mapping.end()) return var_entry->second;
-                TypePtr new_var = fresh();
-                mapping[t->var_id] = new_var;
-                return new_var;
+                auto existing = var_mapping.find(node->var_id);
+                if (existing != var_mapping.end()) return existing->second;
+                TypePtr fresh_var = fresh();
+                var_mapping[node->var_id] = fresh_var;
+                return fresh_var;
             }
             case Type::Kind::List:
-                return Type::make_list(go(t->element_type));
+                return Type::make_list(walk(node->element_type));
             case Type::Kind::Function: {
                 std::vector<TypePtr> params;
-                for (auto& param : t->param_types)
-                    params.push_back(go(param));
-                return Type::make_function(std::move(params), go(t->return_type));
+                for (auto& param : node->param_types)
+                    params.push_back(walk(param));
+                return Type::make_function(std::move(params), walk(node->return_type));
             }
             default:
-                return t;  // concrete types are returned as-is
+                return node;  // concrete types are returned as-is
         }
     };
-    return go(type);
+    return walk(type);
 }
 
 // ── Expression inference ──────────────────────────────────────────────────────
 
-TypePtr TypeChecker::infer_expression(const Expression* e) {
+TypePtr TypeChecker::infer_expression(const Expression* expr) {
+    // record() resolves the type fully before storing, so expr_types always holds concrete types.
     auto record = [&](TypePtr type) -> TypePtr {
-        expr_types[e] = resolve(type);
+        expr_types[expr] = resolve(type);
         return type;
     };
 
     // ── Literals ──────────────────────────────────────────────────────────────
 
-    if (dynamic_cast<const NumberExpression*>(e))  return record(Type::make_number());
-    if (dynamic_cast<const StringExpression*>(e))  return record(Type::make_text());
-    if (dynamic_cast<const BoolExpression*>(e))    return record(Type::make_flag());
-    if (dynamic_cast<const NothingExpression*>(e)) return record(Type::make_nothing());
+    if (dynamic_cast<const NumberExpression*>(expr))  return record(Type::make_number());
+    if (dynamic_cast<const StringExpression*>(expr))  return record(Type::make_text());
+    if (dynamic_cast<const BoolExpression*>(expr))    return record(Type::make_flag());
+    if (dynamic_cast<const NothingExpression*>(expr)) return record(Type::make_nothing());
 
     // ── Variable lookup ───────────────────────────────────────────────────────
 
-    if (auto* ident_expr = dynamic_cast<const IdentExpression*>(e))
+    if (auto* ident_expr = dynamic_cast<const IdentExpression*>(expr))
         return record(lookup(ident_expr->name, ident_expr->line));
 
     // ── Borrow expressions ────────────────────────────────────────────────────
 
-    if (auto* borrow_expr = dynamic_cast<const BorrowExpression*>(e))
+    if (auto* borrow_expr = dynamic_cast<const BorrowExpression*>(expr))
         return record(lookup(borrow_expr->source, borrow_expr->line));
-    if (auto* mutable_borrow_expr = dynamic_cast<const MutableBorrowExpression*>(e))
+    if (auto* mutable_borrow_expr = dynamic_cast<const MutableBorrowExpression*>(expr))
         return record(lookup(mutable_borrow_expr->source, mutable_borrow_expr->line));
 
     // ── Unary ─────────────────────────────────────────────────────────────────
 
-    if (auto* unary_expr = dynamic_cast<const UnaryExpression*>(e)) {
+    if (auto* unary_expr = dynamic_cast<const UnaryExpression*>(expr)) {
         TypePtr operand = infer_expression(unary_expr->operand.get());
         if (unary_expr->op == "not") {
             unify(operand, Type::make_flag(), 0);
@@ -277,7 +279,7 @@ TypePtr TypeChecker::infer_expression(const Expression* e) {
 
     // ── Binary ────────────────────────────────────────────────────────────────
 
-    if (auto* binary_expr = dynamic_cast<const BinaryExpression*>(e)) {
+    if (auto* binary_expr = dynamic_cast<const BinaryExpression*>(expr)) {
         TypePtr left_type  = infer_expression(binary_expr->left.get());
         TypePtr right_type = infer_expression(binary_expr->right.get());
 
@@ -297,7 +299,8 @@ TypePtr TypeChecker::infer_expression(const Expression* e) {
             unify(right_type, Type::make_number(), binary_expr->line);
             return record(Type::make_number());
         }
-        if (binary_expr->op == ">" || binary_expr->op == "<") {
+        if (binary_expr->op == ">"  || binary_expr->op == "<" ||
+            binary_expr->op == ">=" || binary_expr->op == "<=") {
             unify(left_type,  Type::make_number(), binary_expr->line);
             unify(right_type, Type::make_number(), binary_expr->line);
             return record(Type::make_flag());
@@ -316,7 +319,7 @@ TypePtr TypeChecker::infer_expression(const Expression* e) {
 
     // ── Function call ─────────────────────────────────────────────────────────
 
-    if (auto* call_expr = dynamic_cast<const CallExpression*>(e)) {
+    if (auto* call_expr = dynamic_cast<const CallExpression*>(expr)) {
         // ── Raw pointer built-ins ─────────────────────────────────────────────
         if (call_expr->callee == "allocate") {
             if (call_expr->args.size() != 1) error("allocate() takes 1 argument", call_expr->line);
@@ -367,7 +370,7 @@ TypePtr TypeChecker::infer_expression(const Expression* e) {
 
     // ── List ──────────────────────────────────────────────────────────────────
 
-    if (auto* list_expr = dynamic_cast<const ListExpression*>(e)) {
+    if (auto* list_expr = dynamic_cast<const ListExpression*>(expr)) {
         TypePtr element_type = fresh();
         for (auto& element : list_expr->elements)
             unify(element_type, infer_expression(element.get()), 0);
@@ -375,7 +378,7 @@ TypePtr TypeChecker::infer_expression(const Expression* e) {
     }
 
     // collection[i] or string[i]
-    if (auto* index_expr = dynamic_cast<const IndexExpression*>(e)) {
+    if (auto* index_expr = dynamic_cast<const IndexExpression*>(expr)) {
         TypePtr object_type = infer_expression(index_expr->object.get());
         TypePtr index_type  = infer_expression(index_expr->index.get());
         unify(index_type, Type::make_number(), 0);
@@ -392,13 +395,13 @@ TypePtr TypeChecker::infer_expression(const Expression* e) {
     // ── Shape ─────────────────────────────────────────────────────────────────
 
     // own expr — wraps inner type in Own<T>
-    if (auto* own_expr = dynamic_cast<const OwnExpression*>(e)) {
+    if (auto* own_expr = dynamic_cast<const OwnExpression*>(expr)) {
         TypePtr inner_type = infer_expression(own_expr->inner.get());
         return record(Type::make_own(resolve(inner_type)));
     }
 
     // sam.name
-    if (auto* field_access = dynamic_cast<const FieldAccessExpression*>(e)) {
+    if (auto* field_access = dynamic_cast<const FieldAccessExpression*>(expr)) {
         TypePtr object_type = resolve(infer_expression(field_access->object.get()));
         // Auto-deref own<T> for field access
         if (object_type->kind == Type::Kind::Own)
@@ -419,7 +422,7 @@ TypePtr TypeChecker::infer_expression(const Expression* e) {
     }
 
     // Person { name: "sam", age: 20 }
-    if (auto* shape_instance = dynamic_cast<const ShapeInstanceExpression*>(e)) {
+    if (auto* shape_instance = dynamic_cast<const ShapeInstanceExpression*>(expr)) {
         auto shape_info = shape_types.find(shape_instance->shape_name);
         if (shape_info == shape_types.end()) {
             error("Unknown shape '" + shape_instance->shape_name + "'", 0);
@@ -439,29 +442,29 @@ TypePtr TypeChecker::infer_expression(const Expression* e) {
 // ── Statement checking ────────────────────────────────────────────────────────
 
 // check_block pushes its own scope so nested blocks are properly isolated.
-void TypeChecker::check_block(const Block& b, TypePtr return_type) {
+void TypeChecker::check_block(const Block& block, TypePtr return_type) {
     push_scope();
-    for (auto& stmt : b.stmts)
+    for (auto& stmt : block.stmts)
         check_statement(stmt.get(), return_type);
     pop_scope();
 }
 
-void TypeChecker::check_statement(const Statement* s, TypePtr return_type) {
+void TypeChecker::check_statement(const Statement* stmt, TypePtr return_type) {
 
     // include — already processed in first pass, skip here
-    if (dynamic_cast<const IncludeStatement*>(s)) return;
+    if (dynamic_cast<const IncludeStatement*>(stmt)) return;
 
     // shape — already registered in first pass
-    if (dynamic_cast<const ShapeDefinitionStatement*>(s)) return;
+    if (dynamic_cast<const ShapeDefinitionStatement*>(stmt)) return;
 
     // let [mutable] x = expr
-    if (auto* variable_stmt = dynamic_cast<const VariableStatement*>(s)) {
+    if (auto* variable_stmt = dynamic_cast<const VariableStatement*>(stmt)) {
         bind(variable_stmt->name, infer_expression(variable_stmt->value.get()));
         return;
     }
 
     // let x borrow [mutable] y — target gets same type as source; deref own<T>
-    if (auto* borrow_stmt = dynamic_cast<const BorrowStatement*>(s)) {
+    if (auto* borrow_stmt = dynamic_cast<const BorrowStatement*>(stmt)) {
         TypePtr source_type = lookup(borrow_stmt->source, borrow_stmt->line);
         if (source_type && source_type->kind == Type::Kind::Own)
             bind(borrow_stmt->target, source_type->element_type);
@@ -469,7 +472,7 @@ void TypeChecker::check_statement(const Statement* s, TypePtr return_type) {
             bind(borrow_stmt->target, source_type);
         return;
     }
-    if (auto* mutable_borrow_stmt = dynamic_cast<const MutableBorrowStatement*>(s)) {
+    if (auto* mutable_borrow_stmt = dynamic_cast<const MutableBorrowStatement*>(stmt)) {
         TypePtr source_type = lookup(mutable_borrow_stmt->source, mutable_borrow_stmt->line);
         if (source_type && source_type->kind == Type::Kind::Own)
             bind(mutable_borrow_stmt->target, source_type->element_type);
@@ -479,13 +482,13 @@ void TypeChecker::check_statement(const Statement* s, TypePtr return_type) {
     }
 
     // unsafe: block — type-check contents normally
-    if (auto* unsafe_stmt = dynamic_cast<const UnsafeStatement*>(s)) {
+    if (auto* unsafe_stmt = dynamic_cast<const UnsafeStatement*>(stmt)) {
         check_block(unsafe_stmt->body, return_type);
         return;
     }
 
     // define name(params): body
-    if (auto* function_stmt = dynamic_cast<const FunctionStatement*>(s)) {
+    if (auto* function_stmt = dynamic_cast<const FunctionStatement*>(stmt)) {
         // Retrieve the signature registered in the first pass
         TypePtr function_type = resolve(lookup(function_stmt->name, 0));
         // Params go in a fresh scope that wraps the body scope
@@ -500,13 +503,13 @@ void TypeChecker::check_statement(const Statement* s, TypePtr return_type) {
     }
 
     // give back expr
-    if (auto* return_stmt = dynamic_cast<const ReturnStatement*>(s)) {
+    if (auto* return_stmt = dynamic_cast<const ReturnStatement*>(stmt)) {
         unify(infer_expression(return_stmt->value.get()), return_type, 0);
         return;
     }
 
     // when cond: ...
-    if (auto* if_stmt = dynamic_cast<const IfStatement*>(s)) {
+    if (auto* if_stmt = dynamic_cast<const IfStatement*>(stmt)) {
         unify(infer_expression(if_stmt->condition.get()), Type::make_flag(), 0);
         check_block(if_stmt->then_block, return_type);
         if (if_stmt->else_block) check_block(*if_stmt->else_block, return_type);
@@ -514,14 +517,14 @@ void TypeChecker::check_statement(const Statement* s, TypePtr return_type) {
     }
 
     // as long as cond: ...
-    if (auto* while_stmt = dynamic_cast<const WhileStatement*>(s)) {
+    if (auto* while_stmt = dynamic_cast<const WhileStatement*>(stmt)) {
         unify(infer_expression(while_stmt->condition.get()), Type::make_flag(), 0);
         check_block(while_stmt->body, return_type);
         return;
     }
 
     // for each x in list: ...
-    if (auto* for_each_stmt = dynamic_cast<const ForEachStatement*>(s)) {
+    if (auto* for_each_stmt = dynamic_cast<const ForEachStatement*>(stmt)) {
         TypePtr element_type = fresh();
         unify(infer_expression(for_each_stmt->iterable.get()), Type::make_list(element_type), 0);
         // Loop variable scope wraps the body scope
@@ -533,7 +536,7 @@ void TypeChecker::check_statement(const Statement* s, TypePtr return_type) {
     }
 
     // sam.age = 21
-    if (auto* field_assign_stmt = dynamic_cast<const FieldAssignStatement*>(s)) {
+    if (auto* field_assign_stmt = dynamic_cast<const FieldAssignStatement*>(stmt)) {
         TypePtr object_type      = resolve(lookup(field_assign_stmt->variable, field_assign_stmt->line));
         TypePtr field_value_type = infer_expression(field_assign_stmt->value.get());
         if (object_type->kind == Type::Kind::Shape) {
@@ -553,7 +556,7 @@ void TypeChecker::check_statement(const Statement* s, TypePtr return_type) {
     }
 
     // Bare expression statement (e.g. a print() call)
-    if (auto* expr_stmt = dynamic_cast<const ExpressionStatement*>(s)) {
+    if (auto* expr_stmt = dynamic_cast<const ExpressionStatement*>(stmt)) {
         infer_expression(expr_stmt->expr.get());
         return;
     }

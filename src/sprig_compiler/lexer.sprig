@@ -1,0 +1,311 @@
+// ── Shapes ────────────────────────────────────────────────────────────────────
+
+shape Token:
+    kind:  text    // "LET", "IDENT", "NUMBER", "NEWLINE", "INDENT", etc.
+    value: text    // lexeme or processed string value
+    line:  number
+    col:   number  // column index; also stores indent level for INDENT_HINT
+
+// All mutable scan state in one shape — field assignment works across scopes.
+shape LexerState:
+    source:      text
+    pos:         number
+    line:        number
+    col:         number
+    current_str: text    // accumulator for string/identifier values
+    scratch:     number  // general-purpose counter (e.g. space counting)
+
+// ── Character helpers ─────────────────────────────────────────────────────────
+
+define is_digit(ch):
+    let code_val = char_code(ch)
+    give back code_val >= 48 and code_val <= 57
+
+define is_alpha(ch):
+    let code_val = char_code(ch)
+    give back (code_val >= 65 and code_val <= 90) or (code_val >= 97 and code_val <= 122) or ch is "_"
+
+define is_alnum(ch):
+    give back is_alpha(ch) or is_digit(ch)
+
+// ── Keyword table ─────────────────────────────────────────────────────────────
+
+define keyword_kind(word):
+    when word is "let":       give back "LET"
+    when word is "mutable":   give back "MUTABLE"
+    when word is "define":    give back "DEFINE"
+    when word is "give":      give back "GIVE"
+    when word is "back":      give back "BACK"
+    when word is "when":      give back "WHEN"
+    when word is "otherwise": give back "OTHERWISE"
+    when word is "as":        give back "AS"
+    when word is "long":      give back "LONG"
+    when word is "for":       give back "FOR"
+    when word is "each":      give back "EACH"
+    when word is "in":        give back "IN"
+    when word is "stop":      give back "STOP"
+    when word is "skip":      give back "SKIP"
+    when word is "and":       give back "AND"
+    when word is "or":        give back "OR"
+    when word is "not":       give back "NOT"
+    when word is "is":        give back "IS"
+    when word is "true":      give back "TRUE"
+    when word is "false":     give back "FALSE"
+    when word is "nothing":   give back "NOTHING"
+    when word is "shape":     give back "SHAPE"
+    when word is "include":   give back "INCLUDE"
+    when word is "borrow":    give back "BORROW"
+    when word is "own":       give back "OWN"
+    when word is "unsafe":    give back "UNSAFE"
+    when word is "text":      give back "TYPE_TEXT"
+    when word is "number":    give back "TYPE_NUMBER"
+    when word is "decimal":   give back "TYPE_DECIMAL"
+    when word is "flag":      give back "TYPE_FLAG"
+    give back "IDENT"
+
+define make_tok(kind, value, line, col):
+    give back Token { kind: kind, value: value, line: line, col: col }
+
+// ── Leading space counter ─────────────────────────────────────────────────────
+// Uses a LexerState shape so the counter survives the inner while loop.
+
+define count_indent(source, start_pos, src_len):
+    // LexerState is used here only for its pos and scratch fields — scratch accumulates the space count.
+    let indent_counter = LexerState {
+        source: source, pos: start_pos,
+        line: 0, col: 0, current_str: "", scratch: 0
+    }
+    as long as indent_counter.pos < src_len and (source[indent_counter.pos] is " " or source[indent_counter.pos] is "\t"):
+        indent_counter.scratch = indent_counter.scratch + 1
+        indent_counter.pos = indent_counter.pos + 1
+    give back indent_counter.scratch
+
+// ── Pass 1: raw scan ──────────────────────────────────────────────────────────
+// Produces tokens including INDENT_HINT markers after each NEWLINE.
+// INDENT_HINT.col stores the indent level of the following non-blank line.
+
+define scan_raw(source):
+    let state = LexerState {
+        source: source, pos: 0, line: 1,
+        col: 0, current_str: "", scratch: 0
+    }
+    let mutable tokens = []
+    let src_len = length(source)
+
+    as long as state.pos < src_len:
+        let ch = source[state.pos]
+        let tok_col = state.col
+
+        // ── Line comments ──────────────────────────────────────────────────────
+        when ch is "/" and state.pos + 1 < src_len and source[state.pos + 1] is "/":
+            as long as state.pos < src_len and not (source[state.pos] is "\n"):
+                state.pos = state.pos + 1
+                state.col = state.col + 1
+
+        // ── Whitespace (not newlines) ──────────────────────────────────────────
+        otherwise when ch is " " or ch is "\t" or ch is "\r":
+            state.pos = state.pos + 1
+            state.col = state.col + 1
+
+        // ── Newlines + indent hints ────────────────────────────────────────────
+        otherwise when ch is "\n":
+            append(tokens, make_tok("NEWLINE", "\n", state.line, state.col))
+            state.pos = state.pos + 1
+            state.line = state.line + 1
+            state.col = 0
+
+            // Skip blank lines
+            as long as state.pos < src_len and source[state.pos] is "\n":
+                state.pos = state.pos + 1
+                state.line = state.line + 1
+
+            // Emit an INDENT_HINT so pass 2 knows the next line's indent level.
+            // We use col field to carry the numeric level (not the text col).
+            when state.pos < src_len:
+                let new_indent = count_indent(source, state.pos, src_len)
+                append(tokens, make_tok("INDENT_HINT", "", state.line, new_indent))
+
+        // ── Numbers ───────────────────────────────────────────────────────────
+        otherwise when is_digit(ch):
+            let num_start = state.pos
+            as long as state.pos < src_len and is_digit(source[state.pos]):
+                state.pos = state.pos + 1
+                state.col = state.col + 1
+            // Optional decimal part
+            when state.pos + 1 < src_len and source[state.pos] is "." and is_digit(source[state.pos + 1]):
+                state.pos = state.pos + 1
+                state.col = state.col + 1
+                as long as state.pos < src_len and is_digit(source[state.pos]):
+                    state.pos = state.pos + 1
+                    state.col = state.col + 1
+            append(tokens, make_tok("NUMBER",
+                substring(source, num_start, state.pos - num_start),
+                state.line, tok_col))
+
+        // ── Strings ───────────────────────────────────────────────────────────
+        // Must process char-by-char to handle escape sequences.
+        // Uses state.current_str as accumulator (shape field survives inner scopes).
+        otherwise when ch is "\"":
+            state.pos = state.pos + 1
+            state.col = state.col + 1
+            state.current_str = ""
+            as long as state.pos < src_len and not (source[state.pos] is "\""):
+                when source[state.pos] is "\\":
+                    state.pos = state.pos + 1
+                    state.col = state.col + 1
+                    when state.pos < src_len:
+                        let esc = source[state.pos]
+                        when esc is "n":
+                            state.current_str = state.current_str + "\n"
+                        otherwise when esc is "t":
+                            state.current_str = state.current_str + "\t"
+                        otherwise when esc is "r":
+                            state.current_str = state.current_str + "\r"
+                        otherwise when esc is "\\":
+                            state.current_str = state.current_str + "\\"
+                        otherwise when esc is "\"":
+                            state.current_str = state.current_str + "\""
+                        otherwise:
+                            state.current_str = state.current_str + esc
+                        state.pos = state.pos + 1
+                        state.col = state.col + 1
+                otherwise:
+                    state.current_str = state.current_str + source[state.pos]
+                    state.pos = state.pos + 1
+                    state.col = state.col + 1
+            state.pos = state.pos + 1   // closing "
+            state.col = state.col + 1
+            append(tokens, make_tok("STRING", state.current_str, state.line, tok_col))
+
+        // ── Identifiers and keywords ───────────────────────────────────────────
+        // Use substring instead of char accumulation — no mutable local needed.
+        otherwise when is_alpha(ch):
+            let word_start = state.pos
+            as long as state.pos < src_len and is_alnum(source[state.pos]):
+                state.pos = state.pos + 1
+                state.col = state.col + 1
+            let word = substring(source, word_start, state.pos - word_start)
+            append(tokens, make_tok(keyword_kind(word), word, state.line, tok_col))
+
+        // ── Two-character operators ────────────────────────────────────────────
+        otherwise when ch is "=" and state.pos + 1 < src_len and source[state.pos + 1] is "=":
+            append(tokens, make_tok("EQ", "==", state.line, tok_col))
+            state.pos = state.pos + 2
+            state.col = state.col + 2
+
+        otherwise when ch is "!" and state.pos + 1 < src_len and source[state.pos + 1] is "=":
+            append(tokens, make_tok("NEQ", "!=", state.line, tok_col))
+            state.pos = state.pos + 2
+            state.col = state.col + 2
+
+        otherwise when ch is "<" and state.pos + 1 < src_len and source[state.pos + 1] is "=":
+            append(tokens, make_tok("LTE", "<=", state.line, tok_col))
+            state.pos = state.pos + 2
+            state.col = state.col + 2
+
+        otherwise when ch is ">" and state.pos + 1 < src_len and source[state.pos + 1] is "=":
+            append(tokens, make_tok("GTE", ">=", state.line, tok_col))
+            state.pos = state.pos + 2
+            state.col = state.col + 2
+
+        // ── Single-character tokens ────────────────────────────────────────────
+        otherwise when ch is "=":
+            append(tokens, make_tok("ASSIGN",   "=", state.line, tok_col)) state.pos = state.pos + 1 state.col = state.col + 1
+        otherwise when ch is "+":
+            append(tokens, make_tok("PLUS",     "+", state.line, tok_col)) state.pos = state.pos + 1 state.col = state.col + 1
+        otherwise when ch is "-":
+            append(tokens, make_tok("MINUS",    "-", state.line, tok_col)) state.pos = state.pos + 1 state.col = state.col + 1
+        otherwise when ch is "*":
+            append(tokens, make_tok("STAR",     "*", state.line, tok_col)) state.pos = state.pos + 1 state.col = state.col + 1
+        otherwise when ch is "/":
+            append(tokens, make_tok("SLASH",    "/", state.line, tok_col)) state.pos = state.pos + 1 state.col = state.col + 1
+        otherwise when ch is "<":
+            append(tokens, make_tok("LT",       "<", state.line, tok_col)) state.pos = state.pos + 1 state.col = state.col + 1
+        otherwise when ch is ">":
+            append(tokens, make_tok("GT",       ">", state.line, tok_col)) state.pos = state.pos + 1 state.col = state.col + 1
+        otherwise when ch is "(":
+            append(tokens, make_tok("LPAREN",   "(", state.line, tok_col)) state.pos = state.pos + 1 state.col = state.col + 1
+        otherwise when ch is ")":
+            append(tokens, make_tok("RPAREN",   ")", state.line, tok_col)) state.pos = state.pos + 1 state.col = state.col + 1
+        otherwise when ch is "[":
+            append(tokens, make_tok("LBRACKET", "[", state.line, tok_col)) state.pos = state.pos + 1 state.col = state.col + 1
+        otherwise when ch is "]":
+            append(tokens, make_tok("RBRACKET", "]", state.line, tok_col)) state.pos = state.pos + 1 state.col = state.col + 1
+        otherwise when ch is "{":
+            append(tokens, make_tok("LBRACE",   "{", state.line, tok_col)) state.pos = state.pos + 1 state.col = state.col + 1
+        otherwise when ch is "}":
+            append(tokens, make_tok("RBRACE",   "}", state.line, tok_col)) state.pos = state.pos + 1 state.col = state.col + 1
+        otherwise when ch is ",":
+            append(tokens, make_tok("COMMA",    ",", state.line, tok_col)) state.pos = state.pos + 1 state.col = state.col + 1
+        otherwise when ch is ":":
+            append(tokens, make_tok("COLON",    ":", state.line, tok_col)) state.pos = state.pos + 1 state.col = state.col + 1
+        otherwise when ch is ".":
+            append(tokens, make_tok("DOT",      ".", state.line, tok_col)) state.pos = state.pos + 1 state.col = state.col + 1
+        otherwise:
+            // Unknown character — skip
+            state.pos = state.pos + 1
+            state.col = state.col + 1
+
+    append(tokens, make_tok("EOF", "", state.line, 0))
+    give back tokens
+
+// ── Pass 2: INDENT/DEDENT insertion ──────────────────────────────────────────
+// Reads NEWLINE + INDENT_HINT pairs from pass 1 and emits proper INDENT/DEDENT.
+// Mirrors the C++ insert_indent_tokens logic.
+// Uses a shape for the iteration counter (survives inner while scopes).
+
+shape IndentPass:
+    i: number
+
+define add_indent_tokens(raw):
+    let mutable result = []
+    let mutable stack = [0]   // indent level stack; top = last(stack)
+    let n = length(raw)
+    let pass = IndentPass { i: 0 }
+
+    as long as pass.i < n:
+        let tok = raw[pass.i]
+
+        when tok.kind is "NEWLINE":
+            // Check for a following INDENT_HINT
+            when pass.i + 1 < n and raw[pass.i + 1].kind is "INDENT_HINT":
+                let hint    = raw[pass.i + 1]
+                let new_ind = hint.col    // col carries the indent level
+                let cur_ind = last(stack)
+
+                when new_ind > cur_ind:
+                    append(result, tok)
+                    append(stack, new_ind)
+                    append(result, make_tok("INDENT", "", hint.line, new_ind))
+                otherwise when new_ind < cur_ind:
+                    append(result, tok)
+                    as long as length(stack) > 1 and last(stack) > new_ind:
+                        pop(stack)
+                        append(result, make_tok("DEDENT", "", hint.line, 0))
+                otherwise:
+                    append(result, tok)   // same indent — just keep NEWLINE
+
+                pass.i = pass.i + 2       // consume NEWLINE + INDENT_HINT
+            otherwise:
+                append(result, tok)
+                pass.i = pass.i + 1
+
+        otherwise when tok.kind is "INDENT_HINT":
+            pass.i = pass.i + 1   // discard any orphan hints
+
+        otherwise:
+            append(result, tok)
+            pass.i = pass.i + 1
+
+    // Close any still-open indent levels at end of file
+    as long as length(stack) > 1:
+        pop(stack)
+        append(result, make_tok("DEDENT", "", 0, 0))
+
+    give back result
+
+// ── Public entry point ────────────────────────────────────────────────────────
+
+define tokenize(source):
+    let raw = scan_raw(source)
+    give back add_indent_tokens(raw)

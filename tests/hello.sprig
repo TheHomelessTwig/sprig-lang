@@ -1,27 +1,10 @@
-print("")
-// Basic list creation and access
-let names = ["sam", "alex", "jordan"]
-print(names[0])
-print(length(names))
+define greet(name):
+    give back "Hello, " + name + "!"
 
-// Appending
-append(names, "taylor")
-print(last(names))
-print(length(names))
+let msg = greet("Sprig")
+print(msg)
 
-// for each loop
-for each name in names:
-    print(name)
-
-// Numeric list with stop and skip
-let numbers = [1, 2, 3, 4, 5]
-for each n in numbers:
-    when n is 3:
-        skip
-    when n is 5:
-        stop
-    print(n)
-
-// Nested list
-let pairs = [[1, 2], [3, 4]]
-print(pairs[0][1])
+let mutable count = 0
+as long as count < 3:
+    print(count)
+    let count = count + 1

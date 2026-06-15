@@ -52,7 +52,7 @@ private:
 
     void release_borrows(const std::string& borrow_name);
 
-    void check_statement(const Statement* s);
-    void check_expression(const Expression* e);
-    void check_block(const Block& b);
+    void check_statement(const Statement* stmt);
+    void check_expression(const Expression* expr);
+    void check_block(const Block& block);
 };

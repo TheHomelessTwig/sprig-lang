@@ -105,13 +105,13 @@ private:
 
     // ── Type coercion ─────────────────────────────────────────────────────────
     llvm::Value* to_bool(llvm::Value* val);
-    llvm::Value* coerce(llvm::Value* val, llvm::Type* t);
+    llvm::Value* coerce(llvm::Value* val, llvm::Type* target_type);
 
     // ── Sprig-type lookup for an expression ───────────────────────────────────
-    TypePtr expr_type(const Expression* e);
+    TypePtr expr_type(const Expression* expr_ptr);
 
     // ── Code generation ───────────────────────────────────────────────────────
-    llvm::Value* gen_expr(const Expression* e);
-    void         gen_stmt(const Statement* s);
-    void         gen_block(const Block& b);
+    llvm::Value* gen_expr(const Expression* expr);
+    void         gen_stmt(const Statement* stmt);
+    void         gen_block(const Block& block);
 };

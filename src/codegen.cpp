@@ -176,9 +176,9 @@ void CodeGen::compile(const Program& program,
     if (llvm::verifyModule(*module, &error_stream))
         throw std::runtime_error("LLVM verification failed:\n" + error_stream.str());
 
-    std::error_code ec;
-    llvm::raw_fd_ostream out(output_path, ec, llvm::sys::fs::OF_Text);
-    if (ec) throw std::runtime_error("Cannot write output: " + ec.message());
+    std::error_code file_error;
+    llvm::raw_fd_ostream out(output_path, file_error, llvm::sys::fs::OF_Text);
+    if (file_error) throw std::runtime_error("Cannot write output: " + file_error.message());
     module->print(out, nullptr);
 }
 
@@ -327,9 +327,9 @@ llvm::Value* CodeGen::coerce(llvm::Value* val, llvm::Type* target_type) {
 
 // ── Sprig type lookup for an expression ──────────────────────────────────────
 
-TypePtr CodeGen::expr_type(const Expression* e) {
+TypePtr CodeGen::expr_type(const Expression* expr_ptr) {
     if (!expr_types) return nullptr;
-    auto type_entry = expr_types->find(e);
+    auto type_entry = expr_types->find(expr_ptr);
     if (type_entry == expr_types->end()) return nullptr;
     return type_entry->second;
 }
@@ -537,25 +537,25 @@ void CodeGen::emit_print(llvm::Value* val, TypePtr sprig_type) {
 
 // ── Expression codegen ────────────────────────────────────────────────────────
 
-llvm::Value* CodeGen::gen_expr(const Expression* e) {
+llvm::Value* CodeGen::gen_expr(const Expression* expr) {
 
     // ── Literals ──────────────────────────────────────────────────────────────
 
-    if (auto* number_expr = dynamic_cast<const NumberExpression*>(e))
+    if (auto* number_expr = dynamic_cast<const NumberExpression*>(expr))
         return llvm::ConstantFP::get(double_type(), number_expr->value);
 
-    if (auto* string_expr = dynamic_cast<const StringExpression*>(e))
+    if (auto* string_expr = dynamic_cast<const StringExpression*>(expr))
         return builder->CreateGlobalStringPtr(string_expr->value, ".str");
 
-    if (auto* bool_expr = dynamic_cast<const BoolExpression*>(e))
+    if (auto* bool_expr = dynamic_cast<const BoolExpression*>(expr))
         return llvm::ConstantInt::get(bool_type(), bool_expr->value ? 1 : 0);
 
-    if (dynamic_cast<const NothingExpression*>(e))
+    if (dynamic_cast<const NothingExpression*>(expr))
         return llvm::ConstantFP::get(double_type(), 0.0);
 
     // ── Variable read ─────────────────────────────────────────────────────────
 
-    if (auto* ident_expr = dynamic_cast<const IdentExpression*>(e)) {
+    if (auto* ident_expr = dynamic_cast<const IdentExpression*>(expr)) {
         auto* slot = get_var(ident_expr->name);
         if (!slot)
             throw std::runtime_error("Undefined variable '" + ident_expr->name + "'");
@@ -564,12 +564,12 @@ llvm::Value* CodeGen::gen_expr(const Expression* e) {
 
     // ── Borrow expressions ────────────────────────────────────────────────────
 
-    if (auto* borrow_expr = dynamic_cast<const BorrowExpression*>(e)) {
+    if (auto* borrow_expr = dynamic_cast<const BorrowExpression*>(expr)) {
         auto* slot = get_var(borrow_expr->source);
         if (!slot) throw std::runtime_error("Undefined variable '" + borrow_expr->source + "'");
         return builder->CreateLoad(slot->getAllocatedType(), slot, borrow_expr->source);
     }
-    if (auto* mutable_borrow_expr = dynamic_cast<const MutableBorrowExpression*>(e)) {
+    if (auto* mutable_borrow_expr = dynamic_cast<const MutableBorrowExpression*>(expr)) {
         auto* slot = get_var(mutable_borrow_expr->source);
         if (!slot) throw std::runtime_error("Undefined variable '" + mutable_borrow_expr->source + "'");
         return builder->CreateLoad(slot->getAllocatedType(), slot, mutable_borrow_expr->source);
@@ -577,7 +577,7 @@ llvm::Value* CodeGen::gen_expr(const Expression* e) {
 
     // ── own expr — Box<T> ────────────────────────────────────────────────────
 
-    if (auto* own_expr = dynamic_cast<const OwnExpression*>(e)) {
+    if (auto* own_expr = dynamic_cast<const OwnExpression*>(expr)) {
         auto* inner_value = gen_expr(own_expr->inner.get());
         // Shapes and lists are already heap pointers — return as-is
         if (inner_value->getType() == ptr_type()) return inner_value;
@@ -592,7 +592,7 @@ llvm::Value* CodeGen::gen_expr(const Expression* e) {
 
     // ── List literal ──────────────────────────────────────────────────────────
 
-    if (auto* list_expr = dynamic_cast<const ListExpression*>(e)) {
+    if (auto* list_expr = dynamic_cast<const ListExpression*>(expr)) {
         auto* current_function = builder->GetInsertBlock()->getParent();
         int   initial_capacity = std::max(4, (int)list_expr->elements.size());
         auto* list_ptr         = list_new(initial_capacity);
@@ -605,7 +605,7 @@ llvm::Value* CodeGen::gen_expr(const Expression* e) {
 
     // ── Index access ──────────────────────────────────────────────────────────
 
-    if (auto* index_expr = dynamic_cast<const IndexExpression*>(e)) {
+    if (auto* index_expr = dynamic_cast<const IndexExpression*>(expr)) {
         auto* list_value  = gen_expr(index_expr->object.get());
         auto* index_value = gen_expr(index_expr->index.get());
         auto* raw_element = list_get(list_value, index_value);
@@ -617,7 +617,7 @@ llvm::Value* CodeGen::gen_expr(const Expression* e) {
 
     // ── Shape instantiation ───────────────────────────────────────────────────
 
-    if (auto* shape_instance = dynamic_cast<const ShapeInstanceExpression*>(e)) {
+    if (auto* shape_instance = dynamic_cast<const ShapeInstanceExpression*>(expr)) {
         auto* struct_type = get_shape_llvm_type(shape_instance->shape_name);
         auto* malloc_fn   = module->getFunction("malloc");
         auto  struct_size = module->getDataLayout().getTypeAllocSize(struct_type);
@@ -649,7 +649,7 @@ llvm::Value* CodeGen::gen_expr(const Expression* e) {
 
     // ── Field access ──────────────────────────────────────────────────────────
 
-    if (auto* field_access = dynamic_cast<const FieldAccessExpression*>(e)) {
+    if (auto* field_access = dynamic_cast<const FieldAccessExpression*>(expr)) {
         auto* object_value = gen_expr(field_access->object.get());
         TypePtr object_type = expr_type(field_access->object.get());
         // Auto-deref own<T> — the ptr value is already the heap-allocated struct
@@ -672,7 +672,7 @@ llvm::Value* CodeGen::gen_expr(const Expression* e) {
 
     // ── Binary expressions ────────────────────────────────────────────────────
 
-    if (auto* binary_expr = dynamic_cast<const BinaryExpression*>(e)) {
+    if (auto* binary_expr = dynamic_cast<const BinaryExpression*>(expr)) {
 
         if (binary_expr->op == "and") {
             auto* current_function = builder->GetInsertBlock()->getParent();
@@ -764,7 +764,7 @@ llvm::Value* CodeGen::gen_expr(const Expression* e) {
 
     // ── Unary ─────────────────────────────────────────────────────────────────
 
-    if (auto* unary_expr = dynamic_cast<const UnaryExpression*>(e)) {
+    if (auto* unary_expr = dynamic_cast<const UnaryExpression*>(expr)) {
         auto* operand_value = gen_expr(unary_expr->operand.get());
         if (unary_expr->op == "not") return builder->CreateNot(to_bool(operand_value), "not");
         if (unary_expr->op == "-")   return builder->CreateFNeg(operand_value, "neg");
@@ -773,7 +773,7 @@ llvm::Value* CodeGen::gen_expr(const Expression* e) {
 
     // ── Function calls ────────────────────────────────────────────────────────
 
-    if (auto* call_expr = dynamic_cast<const CallExpression*>(e)) {
+    if (auto* call_expr = dynamic_cast<const CallExpression*>(expr)) {
 
         if (call_expr->callee == "print") {
             for (auto& arg : call_expr->args) {
@@ -1110,20 +1110,20 @@ llvm::Value* CodeGen::gen_expr(const Expression* e) {
 
 // ── Statement codegen ─────────────────────────────────────────────────────────
 
-void CodeGen::gen_stmt(const Statement* s) {
+void CodeGen::gen_stmt(const Statement* stmt) {
 
     // include / shape definition — already processed; skip
-    if (dynamic_cast<const IncludeStatement*>(s))        return;
-    if (dynamic_cast<const ShapeDefinitionStatement*>(s)) return;
+    if (dynamic_cast<const IncludeStatement*>(stmt))        return;
+    if (dynamic_cast<const ShapeDefinitionStatement*>(stmt)) return;
 
     // unsafe: — same as a normal block at IR level
-    if (auto* unsafe_stmt = dynamic_cast<const UnsafeStatement*>(s)) {
+    if (auto* unsafe_stmt = dynamic_cast<const UnsafeStatement*>(stmt)) {
         gen_block(unsafe_stmt->body);
         return;
     }
 
     // let [mutable] x = expr
-    if (auto* variable_stmt = dynamic_cast<const VariableStatement*>(s)) {
+    if (auto* variable_stmt = dynamic_cast<const VariableStatement*>(stmt)) {
         auto* value         = gen_expr(variable_stmt->value.get());
         TypePtr sprig_type  = expr_type(variable_stmt->value.get());
         llvm::Type* llvm_type = sprig_type ? sprig_to_llvm(sprig_type) : value->getType();
@@ -1140,19 +1140,19 @@ void CodeGen::gen_stmt(const Statement* s) {
     }
 
     // let x borrow [mutable] y — alias source slot
-    if (auto* borrow_stmt = dynamic_cast<const BorrowStatement*>(s)) {
+    if (auto* borrow_stmt = dynamic_cast<const BorrowStatement*>(stmt)) {
         auto* slot = get_var(borrow_stmt->source);
         if (slot) set_var(borrow_stmt->target, slot, get_var_type(borrow_stmt->source));
         return;
     }
-    if (auto* mutable_borrow_stmt = dynamic_cast<const MutableBorrowStatement*>(s)) {
+    if (auto* mutable_borrow_stmt = dynamic_cast<const MutableBorrowStatement*>(stmt)) {
         auto* slot = get_var(mutable_borrow_stmt->source);
         if (slot) set_var(mutable_borrow_stmt->target, slot, get_var_type(mutable_borrow_stmt->source));
         return;
     }
 
     // give back expr
-    if (auto* return_stmt = dynamic_cast<const ReturnStatement*>(s)) {
+    if (auto* return_stmt = dynamic_cast<const ReturnStatement*>(stmt)) {
         auto* return_value = gen_expr(return_stmt->value.get());
         if (return_val_slot)
             builder->CreateStore(
@@ -1165,7 +1165,7 @@ void CodeGen::gen_stmt(const Statement* s) {
     }
 
     // when cond: ... [otherwise: ...]
-    if (auto* if_stmt = dynamic_cast<const IfStatement*>(s)) {
+    if (auto* if_stmt = dynamic_cast<const IfStatement*>(stmt)) {
         auto* current_function = builder->GetInsertBlock()->getParent();
         auto* then_block       = llvm::BasicBlock::Create(context, "then",  current_function);
         auto* merge_block      = llvm::BasicBlock::Create(context, "merge", current_function);
@@ -1192,7 +1192,7 @@ void CodeGen::gen_stmt(const Statement* s) {
     }
 
     // as long as cond: body
-    if (auto* while_stmt = dynamic_cast<const WhileStatement*>(s)) {
+    if (auto* while_stmt = dynamic_cast<const WhileStatement*>(stmt)) {
         auto* current_function = builder->GetInsertBlock()->getParent();
         auto* header           = llvm::BasicBlock::Create(context, "while_hdr",  current_function);
         auto* loop_body        = llvm::BasicBlock::Create(context, "while_body", current_function);
@@ -1216,7 +1216,7 @@ void CodeGen::gen_stmt(const Statement* s) {
     }
 
     // for each x in list: body
-    if (auto* for_each_stmt = dynamic_cast<const ForEachStatement*>(s)) {
+    if (auto* for_each_stmt = dynamic_cast<const ForEachStatement*>(stmt)) {
         auto* current_function = builder->GetInsertBlock()->getParent();
         auto* list_ptr         = gen_expr(for_each_stmt->iterable.get());
         TypePtr iterable_type  = expr_type(for_each_stmt->iterable.get());
@@ -1274,7 +1274,7 @@ void CodeGen::gen_stmt(const Statement* s) {
     }
 
     // sam.field = value
-    if (auto* field_assign_stmt = dynamic_cast<const FieldAssignStatement*>(s)) {
+    if (auto* field_assign_stmt = dynamic_cast<const FieldAssignStatement*>(stmt)) {
         auto* obj_slot = get_var(field_assign_stmt->variable);
         if (!obj_slot)
             throw std::runtime_error("Undefined variable '" + field_assign_stmt->variable + "'");
@@ -1298,7 +1298,7 @@ void CodeGen::gen_stmt(const Statement* s) {
     }
 
     // stop
-    if (dynamic_cast<const StopStatement*>(s)) {
+    if (dynamic_cast<const StopStatement*>(stmt)) {
         if (!loop_exit_blocks.empty())
             builder->CreateBr(loop_exit_blocks.back());
         auto* current_function = builder->GetInsertBlock()->getParent();
@@ -1308,7 +1308,7 @@ void CodeGen::gen_stmt(const Statement* s) {
     }
 
     // skip
-    if (dynamic_cast<const SkipStatement*>(s)) {
+    if (dynamic_cast<const SkipStatement*>(stmt)) {
         if (!loop_header_blocks.empty())
             builder->CreateBr(loop_header_blocks.back());
         auto* current_function = builder->GetInsertBlock()->getParent();
@@ -1318,15 +1318,15 @@ void CodeGen::gen_stmt(const Statement* s) {
     }
 
     // Standalone expression
-    if (auto* expr_stmt = dynamic_cast<const ExpressionStatement*>(s)) {
+    if (auto* expr_stmt = dynamic_cast<const ExpressionStatement*>(stmt)) {
         gen_expr(expr_stmt->expr.get());
         return;
     }
 }
 
-void CodeGen::gen_block(const Block& b) {
+void CodeGen::gen_block(const Block& block) {
     push_scope();
-    for (auto& stmt : b.stmts)
+    for (auto& stmt : block.stmts)
         gen_stmt(stmt.get());
     pop_scope();
 }

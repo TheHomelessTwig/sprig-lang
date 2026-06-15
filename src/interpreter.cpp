@@ -80,17 +80,17 @@ std::string Interpreter::make_error(const std::string& msg, int line) const {
     return out;
 }
 
-void Interpreter::eval_block(const Block& b, Environment& env) {
-    for (auto& stmt : b.stmts)
+void Interpreter::eval_block(const Block& block, Environment& env) {
+    for (auto& stmt : block.stmts)
         eval_statement(stmt.get(), env);
 }
 
 // ── Statement evaluation ──────────────────────────────────────────────────────
 
-void Interpreter::eval_statement(const Statement* s, Environment& env) {
+void Interpreter::eval_statement(const Statement* stmt, Environment& env) {
 
     // let [mutable] x = expr
-    if (auto* variable_stmt = dynamic_cast<const VariableStatement*>(s)) {
+    if (auto* variable_stmt = dynamic_cast<const VariableStatement*>(stmt)) {
         Value new_value = eval_expression(variable_stmt->value.get(), env);
         try {
             env.declare(variable_stmt->name, std::move(new_value), variable_stmt->is_mutable);
@@ -102,29 +102,29 @@ void Interpreter::eval_statement(const Statement* s, Environment& env) {
 
     // let x borrow [mutable] y — alias: binds target to source's current value
     // Lists and shapes use shared_ptr so mutations are visible through the alias.
-    if (auto* borrow_stmt = dynamic_cast<const BorrowStatement*>(s)) {
+    if (auto* borrow_stmt = dynamic_cast<const BorrowStatement*>(stmt)) {
         env.declare(borrow_stmt->target, env.get(borrow_stmt->source), false);
         return;
     }
-    if (auto* mutable_borrow_stmt = dynamic_cast<const MutableBorrowStatement*>(s)) {
+    if (auto* mutable_borrow_stmt = dynamic_cast<const MutableBorrowStatement*>(stmt)) {
         env.declare(mutable_borrow_stmt->target, env.get(mutable_borrow_stmt->source), false);
         return;
     }
 
     // define name(params): body  — register without executing
-    if (auto* function_stmt = dynamic_cast<const FunctionStatement*>(s)) {
+    if (auto* function_stmt = dynamic_cast<const FunctionStatement*>(stmt)) {
         functions[function_stmt->name] = SprigFunction{function_stmt->params, &function_stmt->body};
         return;
     }
 
     // shape Person:  — register field schema
-    if (auto* shape_definition = dynamic_cast<const ShapeDefinitionStatement*>(s)) {
+    if (auto* shape_definition = dynamic_cast<const ShapeDefinitionStatement*>(stmt)) {
         shapes[shape_definition->name] = SprigShapeDefinition{shape_definition->fields};
         return;
     }
 
     // sam.age = 21  — mutate through shared_ptr + enforce declared type
-    if (auto* field_assign = dynamic_cast<const FieldAssignStatement*>(s)) {
+    if (auto* field_assign = dynamic_cast<const FieldAssignStatement*>(stmt)) {
         Value obj = env.get(field_assign->variable);
         if (obj.kind != Value::Kind::Shape)
             throw std::runtime_error(make_error(
@@ -155,7 +155,7 @@ void Interpreter::eval_statement(const Statement* s, Environment& env) {
     }
 
     // include "path/to/file.sprig"  — lex, parse, run in current context
-    if (auto* include_stmt = dynamic_cast<const IncludeStatement*>(s)) {
+    if (auto* include_stmt = dynamic_cast<const IncludeStatement*>(stmt)) {
         std::string path = include_stmt->path;
 
         // Resolve relative to the including file's directory
@@ -198,7 +198,7 @@ void Interpreter::eval_statement(const Statement* s, Environment& env) {
     }
 
     // when cond: ...
-    if (auto* if_stmt = dynamic_cast<const IfStatement*>(s)) {
+    if (auto* if_stmt = dynamic_cast<const IfStatement*>(stmt)) {
         Value condition = eval_expression(if_stmt->condition.get(), env);
         if (condition.is_truthy()) {
             Environment inner(&env);
@@ -211,7 +211,7 @@ void Interpreter::eval_statement(const Statement* s, Environment& env) {
     }
 
     // as long as cond: ...
-    if (auto* while_stmt = dynamic_cast<const WhileStatement*>(s)) {
+    if (auto* while_stmt = dynamic_cast<const WhileStatement*>(stmt)) {
         while (eval_expression(while_stmt->condition.get(), env).is_truthy()) {
             Environment inner(&env);
             try {
@@ -226,7 +226,7 @@ void Interpreter::eval_statement(const Statement* s, Environment& env) {
     }
 
     // for each x in list: ...
-    if (auto* for_each_stmt = dynamic_cast<const ForEachStatement*>(s)) {
+    if (auto* for_each_stmt = dynamic_cast<const ForEachStatement*>(stmt)) {
         Value iterable = eval_expression(for_each_stmt->iterable.get(), env);
         if (iterable.kind != Value::Kind::List)
             throw std::runtime_error("'for each' requires a list");
@@ -246,23 +246,23 @@ void Interpreter::eval_statement(const Statement* s, Environment& env) {
     }
 
     // give back expr — unwind via signal to call_function()
-    if (auto* return_stmt = dynamic_cast<const ReturnStatement*>(s)) {
+    if (auto* return_stmt = dynamic_cast<const ReturnStatement*>(stmt)) {
         throw ReturnSignal{eval_expression(return_stmt->value.get(), env)};
     }
 
     // stop / skip — unwind to the nearest enclosing loop
-    if (dynamic_cast<const StopStatement*>(s)) throw StopSignal{};
-    if (dynamic_cast<const SkipStatement*>(s)) throw SkipSignal{};
+    if (dynamic_cast<const StopStatement*>(stmt)) throw StopSignal{};
+    if (dynamic_cast<const SkipStatement*>(stmt)) throw SkipSignal{};
 
     // unsafe: block — borrow checker already validated; run normally
-    if (auto* unsafe_stmt = dynamic_cast<const UnsafeStatement*>(s)) {
+    if (auto* unsafe_stmt = dynamic_cast<const UnsafeStatement*>(stmt)) {
         Environment inner(&env);
         eval_block(unsafe_stmt->body, inner);
         return;
     }
 
     // Bare expression statement (e.g. a print() call)
-    if (auto* expr_stmt = dynamic_cast<const ExpressionStatement*>(s)) {
+    if (auto* expr_stmt = dynamic_cast<const ExpressionStatement*>(stmt)) {
         eval_expression(expr_stmt->expr.get(), env);
         return;
     }
@@ -272,31 +272,31 @@ void Interpreter::eval_statement(const Statement* s, Environment& env) {
 
 // ── Expression evaluation ─────────────────────────────────────────────────────
 
-Value Interpreter::eval_expression(const Expression* e, Environment& env) {
+Value Interpreter::eval_expression(const Expression* expr, Environment& env) {
 
     // ── Literals ──────────────────────────────────────────────────────────────
 
-    if (auto* number_expr = dynamic_cast<const NumberExpression*>(e))
+    if (auto* number_expr = dynamic_cast<const NumberExpression*>(expr))
         return Value::make_number(number_expr->value);
 
-    if (auto* string_expr = dynamic_cast<const StringExpression*>(e))
+    if (auto* string_expr = dynamic_cast<const StringExpression*>(expr))
         return Value::make_string(string_expr->value);
 
-    if (auto* bool_expr = dynamic_cast<const BoolExpression*>(e))
+    if (auto* bool_expr = dynamic_cast<const BoolExpression*>(expr))
         return Value::make_bool(bool_expr->value);
 
-    if (dynamic_cast<const NothingExpression*>(e))
+    if (dynamic_cast<const NothingExpression*>(expr))
         return Value::make_nil();
 
     // ── Variable lookup / borrow expressions ─────────────────────────────────
 
     // borrow [mutable] x — at runtime just produces the value of x
-    if (auto* borrow_expr = dynamic_cast<const BorrowExpression*>(e))
+    if (auto* borrow_expr = dynamic_cast<const BorrowExpression*>(expr))
         return env.get(borrow_expr->source);
-    if (auto* mutable_borrow_expr = dynamic_cast<const MutableBorrowExpression*>(e))
+    if (auto* mutable_borrow_expr = dynamic_cast<const MutableBorrowExpression*>(expr))
         return env.get(mutable_borrow_expr->source);
 
-    if (auto* ident_expr = dynamic_cast<const IdentExpression*>(e)) {
+    if (auto* ident_expr = dynamic_cast<const IdentExpression*>(expr)) {
         try {
             return env.get(ident_expr->name);
         } catch (std::runtime_error&) {
@@ -307,7 +307,7 @@ Value Interpreter::eval_expression(const Expression* e, Environment& env) {
 
     // ── Unary ─────────────────────────────────────────────────────────────────
 
-    if (auto* unary_expr = dynamic_cast<const UnaryExpression*>(e)) {
+    if (auto* unary_expr = dynamic_cast<const UnaryExpression*>(expr)) {
         Value operand = eval_expression(unary_expr->operand.get(), env);
         if (unary_expr->op == "not") return Value::make_bool(!operand.is_truthy());
         if (unary_expr->op == "-")   return Value::make_number(-operand.number);
@@ -316,7 +316,7 @@ Value Interpreter::eval_expression(const Expression* e, Environment& env) {
 
     // ── Binary ────────────────────────────────────────────────────────────────
 
-    if (auto* binary_expr = dynamic_cast<const BinaryExpression*>(e)) {
+    if (auto* binary_expr = dynamic_cast<const BinaryExpression*>(expr)) {
         // Short-circuit logical ops must not force both sides
         if (binary_expr->op == "and") {
             if (!eval_expression(binary_expr->left.get(), env).is_truthy())
@@ -383,7 +383,7 @@ Value Interpreter::eval_expression(const Expression* e, Environment& env) {
 
     // ── List ──────────────────────────────────────────────────────────────────
 
-    if (auto* list_expr = dynamic_cast<const ListExpression*>(e)) {
+    if (auto* list_expr = dynamic_cast<const ListExpression*>(expr)) {
         std::vector<Value> items;
         for (auto& element : list_expr->elements)
             items.push_back(eval_expression(element.get(), env));
@@ -391,7 +391,7 @@ Value Interpreter::eval_expression(const Expression* e, Environment& env) {
     }
 
     // collection[i] or string[i]
-    if (auto* index_expr = dynamic_cast<const IndexExpression*>(e)) {
+    if (auto* index_expr = dynamic_cast<const IndexExpression*>(expr)) {
         Value obj        = eval_expression(index_expr->object.get(), env);
         Value index_val  = eval_expression(index_expr->index.get(), env);
         if (index_val.kind != Value::Kind::Number)
@@ -413,7 +413,7 @@ Value Interpreter::eval_expression(const Expression* e, Environment& env) {
     // ── Shape ─────────────────────────────────────────────────────────────────
 
     // Person { name: "sam", age: 20 }
-    if (auto* shape_instance = dynamic_cast<const ShapeInstanceExpression*>(e)) {
+    if (auto* shape_instance = dynamic_cast<const ShapeInstanceExpression*>(expr)) {
         auto shape_def = shapes.find(shape_instance->shape_name);
         if (shape_def == shapes.end())
             throw std::runtime_error(
@@ -450,7 +450,7 @@ Value Interpreter::eval_expression(const Expression* e, Environment& env) {
     }
 
     // sam.name
-    if (auto* field_access = dynamic_cast<const FieldAccessExpression*>(e)) {
+    if (auto* field_access = dynamic_cast<const FieldAccessExpression*>(expr)) {
         Value obj = eval_expression(field_access->object.get(), env);
         if (obj.kind != Value::Kind::Shape)
             throw std::runtime_error(make_error(
@@ -464,12 +464,12 @@ Value Interpreter::eval_expression(const Expression* e, Environment& env) {
     }
 
     // own expr — interpreter: heap allocation handled by shared_ptr; just eval inner
-    if (auto* own_expr = dynamic_cast<const OwnExpression*>(e))
+    if (auto* own_expr = dynamic_cast<const OwnExpression*>(expr))
         return eval_expression(own_expr->inner.get(), env);
 
     // ── Function calls ────────────────────────────────────────────────────────
 
-    if (auto* call_expr = dynamic_cast<const CallExpression*>(e)) {
+    if (auto* call_expr = dynamic_cast<const CallExpression*>(expr)) {
         // Built-ins checked before user-defined functions
 
         if (call_expr->callee == "print") {
@@ -611,9 +611,9 @@ Value Interpreter::eval_expression(const Expression* e, Environment& env) {
         }
 
         if (call_expr->callee == "char_from_code") {
-            Value val = eval_expression(call_expr->args[0].get(), env);
-            char ch   = (char)(int)val.number;
-            return Value::make_string(std::string(1, ch));
+            Value val      = eval_expression(call_expr->args[0].get(), env);
+            char char_byte = (char)(int)val.number;
+            return Value::make_string(std::string(1, char_byte));
         }
 
         if (call_expr->callee == "substring") {
@@ -624,21 +624,21 @@ Value Interpreter::eval_expression(const Expression* e, Environment& env) {
             Value len_val   = eval_expression(call_expr->args[2].get(), env);
             if (str_val.kind != Value::Kind::String)
                 throw std::runtime_error("substring() requires a string");
-            int start = (int)start_val.number;
-            int len   = (int)len_val.number;
-            int slen  = (int)str_val.str.size();
+            int start      = (int)start_val.number;
+            int len        = (int)len_val.number;
+            int source_len = (int)str_val.str.size();
             if (start < 0) start = 0;
-            if (start >= slen) return Value::make_string("");
-            if (start + len > slen) len = slen - start;
+            if (start >= source_len) return Value::make_string("");
+            if (start + len > source_len) len = source_len - start;
             return Value::make_string(str_val.str.substr(start, len));
         }
 
         if (call_expr->callee == "string_contains") {
             if (call_expr->args.size() != 2)
                 throw std::runtime_error("string_contains() takes 2 arguments");
-            Value hay = eval_expression(call_expr->args[0].get(), env);
-            Value ndl = eval_expression(call_expr->args[1].get(), env);
-            return Value::make_bool(hay.str.find(ndl.str) != std::string::npos);
+            Value haystack = eval_expression(call_expr->args[0].get(), env);
+            Value needle   = eval_expression(call_expr->args[1].get(), env);
+            return Value::make_bool(haystack.str.find(needle.str) != std::string::npos);
         }
 
         // ── File I/O ──────────────────────────────────────────────────────────
@@ -674,11 +674,11 @@ Value Interpreter::eval_expression(const Expression* e, Environment& env) {
         }
 
         if (call_expr->callee == "args_get") {
-            Value idx_val = eval_expression(call_expr->args[0].get(), env);
-            int idx = (int)idx_val.number;
-            if (idx < 0 || idx >= (int)program_args.size())
+            Value index_val = eval_expression(call_expr->args[0].get(), env);
+            int index = (int)index_val.number;
+            if (index < 0 || index >= (int)program_args.size())
                 throw std::runtime_error("args_get(): index out of range");
-            return Value::make_string(program_args[idx]);
+            return Value::make_string(program_args[index]);
         }
 
         if (call_expr->callee == "exit") {

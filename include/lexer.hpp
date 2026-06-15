@@ -99,7 +99,7 @@ class Lexer {
     int start_col = 0;
 
 public:
-    Lexer(std::string src);
+    Lexer(std::string source);
     std::vector<Token> tokenize();
 
 private:

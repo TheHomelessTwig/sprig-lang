@@ -1,0 +1,12 @@
+include "src/sprig_compiler/lexer.sprig"
+
+// Test character helpers first
+print(is_digit("5"))    // true
+print(is_digit("a"))    // false
+print(is_alpha("a"))    // true
+print(is_alnum("5"))    // true
+
+// Test keyword recognition
+print(keyword_kind("let"))    // LET
+print(keyword_kind("when"))   // WHEN
+print(keyword_kind("hello"))  // IDENT
