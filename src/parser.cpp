@@ -37,6 +37,12 @@ void Parser::skip_newlines() {
     while (match(TokenType::NEWLINE)) {}
 }
 
+// Skip NEWLINE/INDENT/DEDENT — for inside () and {} where indent structure is noise.
+void Parser::skip_structure() {
+    while (check(TokenType::NEWLINE) || check(TokenType::INDENT) || check(TokenType::DEDENT))
+        advance();
+}
+
 // ── Top-level ─────────────────────────────────────────────────────────────────
 
 Program Parser::parse() {
@@ -138,12 +144,16 @@ StatementPointer Parser::function_statement() {
     Token name = expect(TokenType::IDENTIFIER, "Expected function name");
     expect(TokenType::LPAREN, "Expected '('");
     std::vector<std::string> params;
+    skip_structure();
     if (!check(TokenType::RPAREN)) {
         do {
+            skip_structure();
             params.push_back(
                 expect(TokenType::IDENTIFIER, "Expected param").lexeme);
+            skip_structure();
         } while (match(TokenType::COMMA));
     }
+    skip_structure();
     expect(TokenType::RPAREN, "Expected ')'");
     return std::make_unique<FunctionStatement>(
         name.lexeme, std::move(params), block());
@@ -372,9 +382,15 @@ ExpressionPointer Parser::call() {
             int         call_line = ident->line;
             advance();
             std::vector<ExpressionPointer> args;
+            skip_structure();
             if (!check(TokenType::RPAREN)) {
-                do { args.push_back(expression()); } while (match(TokenType::COMMA));
+                do {
+                    skip_structure();
+                    args.push_back(expression());
+                    skip_structure();
+                } while (match(TokenType::COMMA));
             }
+            skip_structure();
             expect(TokenType::RPAREN, "Expected ')'");
             expr = std::make_unique<CallExpression>(
                 callee, std::move(args), call_line);
@@ -413,15 +429,21 @@ ExpressionPointer Parser::primary() {
         Token name = advance(); // identifier
         advance();              // '{'
         std::vector<std::pair<std::string, ExpressionPointer>> fields;
-        skip_newlines();
+        skip_structure();
         while (!check(TokenType::RBRACE) && !at_end()) {
+            skip_structure();
+            if (check(TokenType::RBRACE)) break;
             Token fname = expect(TokenType::IDENTIFIER, "Expected field name");
             expect(TokenType::COLON, "Expected ':' after field name");
             auto val = expression();
             fields.push_back({fname.lexeme, std::move(val)});
-            if (!match(TokenType::COMMA)) break;
-            skip_newlines();
+            if (!match(TokenType::COMMA)) {
+                skip_structure();
+                break;
+            }
+            skip_structure();
         }
+        skip_structure();
         expect(TokenType::RBRACE, "Expected '}'");
         return std::make_unique<ShapeInstanceExpression>(
             name.lexeme, std::move(fields));

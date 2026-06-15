@@ -22,6 +22,7 @@ private:
     bool   match(TokenType token_type);
     Token  expect(TokenType token_type, const std::string& msg);
     void   skip_newlines();
+    void   skip_structure(); // also skips INDENT/DEDENT — for inside () and {}
 
     // ── Statements ────────────────────────────────────────────────────────────
 
