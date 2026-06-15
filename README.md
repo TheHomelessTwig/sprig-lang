@@ -22,6 +22,12 @@ clang out.ll -o program -lm
 ./program
 ```
 
+The build also produces `sprig-lsp`, an LSP server that push-publishes diagnostics (lex, parse, type, and borrow errors) on every file change. Install it and point your editor at it:
+
+```bash
+sudo cmake --install build   # installs sprig-lsp to /usr/local/bin
+```
+
 ## Syntax
 
 ### Variables
@@ -55,6 +61,13 @@ otherwise when x == 0:
     print("zero")
 otherwise:
     print("small")
+```
+
+Single-line blocks are also valid when the body is simple:
+
+```sprig
+when x < 0: give back nothing
+when done: stop
 ```
 
 ### Loops
@@ -155,7 +168,7 @@ unsafe:
 include "utils.sprig"
 ```
 
-Included files are processed once (deduplicated). Paths are relative to the including file.
+Included files are processed once (deduplicated). Paths are resolved relative to the working directory first, then relative to the including file as a fallback.
 
 ## Keywords
 
@@ -259,14 +272,15 @@ Included files are processed once (deduplicated). Paths are relative to the incl
 
 ## Operators
 
-| Operator           | Description                         |
-|--------------------|-------------------------------------|
-| `+` `-` `*` `/`    | arithmetic (`+` also concatenates text) |
-| `==` `!=` `is` `is not` | equality                       |
-| `<` `>`            | comparison                          |
-| `and` `or` `not`   | logical                             |
-| `list[i]`          | index access                        |
-| `shape.field`      | field access                        |
+| Operator                  | Description                             |
+|---------------------------|-----------------------------------------|
+| `+` `-` `*` `/`           | arithmetic (`+` also concatenates text) |
+| `-x`                      | unary negation                          |
+| `==` `!=` `is` `is not`   | equality                                |
+| `<` `>` `<=` `>=`         | comparison                              |
+| `and` `or` `not`          | logical                                 |
+| `list[i]`                 | index access                            |
+| `shape.field`             | field access                            |
 
 ## Type checker
 
@@ -320,6 +334,7 @@ src/
   borrowchecker.cpp  — ownership and borrow analysis
   interpreter.cpp    — tree-walk interpreter
   codegen.cpp        — LLVM IR code generator
+  lsp.cpp            — JSON-RPC LSP server (push diagnostics on change)
 include/
   lexer.hpp          — Token, TokenType, Lexer
   parser.hpp         — Parser
@@ -341,4 +356,6 @@ tests/
 
 ## Editor support
 
-A [tree-sitter grammar](https://github.com/TheHomelessTwig/tree-sitter-sprig) is available for Neovim (via nvim-treesitter), providing syntax highlighting and indentation support.
+A [tree-sitter grammar](https://github.com/TheHomelessTwig/tree-sitter-sprig) is available for Neovim (via nvim-treesitter), providing syntax highlighting.
+
+`sprig-lsp` speaks the Language Server Protocol and works with any LSP-capable editor. It runs the full lex → parse → typecheck → borrow pipeline and publishes diagnostics on every file change. No configuration beyond pointing your editor at the binary.
