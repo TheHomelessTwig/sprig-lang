@@ -1,0 +1,641 @@
+// ── src/sprig_compiler/parser.sprig ──────────────────────────────────────────
+// Recursive-descent parser producing an integer-indexed AST node pool.
+//
+// Mutation rule: ALL mutable state lives in shape fields.
+//   - ParseState  — token position and error info
+//   - Linker      — builds singly-linked lists of node IDs via next field
+//   - NodeRef     — updateable single node ID (for binary-op left-hand side)
+//   - StrRef      — updateable string (for parameter list accumulation)
+//
+// Node pool: g_nodes is a global list. alloc_node() appends and returns
+// the new index. Children are stored as integer IDs (-1 = absent).
+// Sibling lists are linked through each node's `next` field.
+//
+// Node kind / field usage:
+//   let          name=var  flag_val=is_mutable  child1=value
+//   define       name=fn   str_val=params(csv)  child1=first_body_stmt
+//   shape_def    name=shape  child1=first_shape_field
+//   shape_field  name=field  str_val=type   next=next_field
+//   if           child1=cond  child2=first_then  child3=first_else
+//   while        child1=cond  child2=first_body
+//   for_each     name=var  child1=iterable  child2=first_body
+//   return       child1=value  (-1 = bare give back)
+//   stop / skip  (no children)
+//   field_assign name=var  str_val=field  child1=value
+//   expr_stmt    child1=expr
+//   number       num_val=value
+//   string       str_val=value
+//   bool         flag_val=value
+//   nothing      (no fields)
+//   ident        name=varname
+//   binary       op=op  child1=left  child2=right
+//   unary        op=op  child1=operand
+//   call         name=callee  child1=first_arg  (args linked via next)
+//   index        child1=object  child2=index_expr
+//   field_access name=fieldname  child1=object
+//   list_expr    child1=first_elem  (elems linked via next)
+//   shape_inst   name=shapename  child1=first_field_init
+//   shape_field_init  name=fieldname  child1=value  next=next_init
+
+// ── Shapes ────────────────────────────────────────────────────────────────────
+
+shape ASTNode:
+    kind: text
+    name: text
+    op: text
+    str_val: text
+    num_val: number
+    flag_val: flag
+    child1: number
+    child2: number
+    child3: number
+    next: number
+
+shape ParseState:
+    pos: number
+    had_error: flag
+    error_msg: text
+
+// Builds singly-linked node lists via the `next` field.
+shape Linker:
+    first: number
+    last: number
+
+// Updateable single node ID — used in binary-op loops where the accumulated
+// left-hand side must survive across loop iterations.
+shape NodeRef:
+    id: number
+
+// Updateable string — used for parameter list accumulation.
+shape StrRef:
+    s: text
+
+// ── Global node pool ──────────────────────────────────────────────────────────
+
+let mutable g_nodes = []
+
+// ── Node helpers ──────────────────────────────────────────────────────────────
+
+define alloc_node(node_kind):
+    let node_id = length(g_nodes)
+    append(g_nodes, ASTNode {
+        kind: node_kind, name: "", op: "", str_val: "",
+        num_val: 0, flag_val: false,
+        child1: -1, child2: -1, child3: -1, next: -1
+    })
+    give back node_id
+
+define linker_new():
+    give back Linker { first: -1, last: -1 }
+
+define linker_add(linker, node_id):
+    when linker.first < 0:
+        linker.first = node_id
+    otherwise:
+        let tail_node = g_nodes[linker.last]
+        tail_node.next = node_id
+    linker.last = node_id
+
+// ── Token navigation ──────────────────────────────────────────────────────────
+
+define p_at_end(state, tokens):
+    give back tokens[state.pos].kind is "EOF"
+
+define p_peek(state, tokens):
+    give back tokens[state.pos]
+
+define p_advance(state, tokens):
+    let token = tokens[state.pos]
+    when not (p_at_end(state, tokens)):
+        state.pos = state.pos + 1
+    give back token
+
+define p_check(state, tokens, token_kind):
+    when p_at_end(state, tokens): give back false
+    give back tokens[state.pos].kind is token_kind
+
+define p_match(state, tokens, token_kind):
+    when p_check(state, tokens, token_kind):
+        state.pos = state.pos + 1
+        give back true
+    give back false
+
+define p_expect(state, tokens, token_kind, message):
+    when p_check(state, tokens, token_kind):
+        let token = tokens[state.pos]
+        state.pos = state.pos + 1
+        give back token
+    let token = tokens[state.pos]
+    state.had_error = true
+    state.error_msg = message + " (got '" + token.value + "' at line " + to_text(token.line) + ")"
+    give back token
+
+define p_skip_nl(state, tokens):
+    as long as p_check(state, tokens, "NEWLINE"):
+        state.pos = state.pos + 1
+
+// Skip NEWLINE/INDENT/DEDENT — inside () and {} where structure is noise.
+define p_skip_struct(state, tokens):
+    as long as (p_check(state, tokens, "NEWLINE") or
+                p_check(state, tokens, "INDENT") or
+                p_check(state, tokens, "DEDENT")):
+        state.pos = state.pos + 1
+
+// ── Block ─────────────────────────────────────────────────────────────────────
+
+define parse_block(state, tokens):
+    p_expect(state, tokens, "COLON", "Expected ':'")
+
+    // Single-line: when cond: stmt
+    when not (p_check(state, tokens, "NEWLINE")) and not (p_at_end(state, tokens)):
+        give back parse_statement(state, tokens)
+
+    p_expect(state, tokens, "NEWLINE", "Expected newline after ':'")
+    p_expect(state, tokens, "INDENT", "Expected indent")
+
+    let stmt_linker = linker_new()
+    as long as not (p_check(state, tokens, "DEDENT")) and not (p_at_end(state, tokens)):
+        p_skip_nl(state, tokens)
+        when p_check(state, tokens, "DEDENT") or p_at_end(state, tokens): stop
+        let stmt_id = parse_statement(state, tokens)
+        when stmt_id >= 0:
+            linker_add(stmt_linker, stmt_id)
+
+    p_expect(state, tokens, "DEDENT", "Expected dedent")
+    give back stmt_linker.first
+
+// ── Statements ────────────────────────────────────────────────────────────────
+
+define parse_statement(state, tokens):
+    p_skip_nl(state, tokens)
+    let token = p_peek(state, tokens)
+
+    when token.kind is "LET":
+        state.pos = state.pos + 1
+        give back parse_let(state, tokens)
+
+    when token.kind is "DEFINE":
+        state.pos = state.pos + 1
+        give back parse_define(state, tokens)
+
+    when token.kind is "SHAPE":
+        state.pos = state.pos + 1
+        give back parse_shape_def(state, tokens)
+
+    when token.kind is "WHEN":
+        state.pos = state.pos + 1
+        give back parse_if(state, tokens)
+
+    when token.kind is "WHILE":
+        state.pos = state.pos + 1
+        give back parse_while(state, tokens)
+
+    when token.kind is "FOR":
+        state.pos = state.pos + 1
+        p_expect(state, tokens, "EACH", "Expected 'each' after 'for'")
+        give back parse_for_each(state, tokens)
+
+    when token.kind is "RETURN":
+        state.pos = state.pos + 1
+        let return_id = alloc_node("return")
+        let return_node = g_nodes[return_id]
+        when not (p_check(state, tokens, "NEWLINE")) and not (p_at_end(state, tokens)):
+            return_node.child1 = parse_expression(state, tokens)
+        p_match(state, tokens, "NEWLINE")
+        give back return_id
+
+    when token.kind is "STOP":
+        state.pos = state.pos + 1
+        p_match(state, tokens, "NEWLINE")
+        give back alloc_node("stop")
+
+    when token.kind is "SKIP":
+        state.pos = state.pos + 1
+        p_match(state, tokens, "NEWLINE")
+        give back alloc_node("skip")
+
+    // field assign: var.field = value
+    when (token.kind is "IDENT" and
+          state.pos + 1 < length(tokens) and
+          tokens[state.pos + 1].kind is "DOT" and
+          state.pos + 2 < length(tokens) and
+          tokens[state.pos + 2].kind is "IDENT" and
+          state.pos + 3 < length(tokens) and
+          tokens[state.pos + 3].kind is "ASSIGN"):
+        give back parse_field_assign(state, tokens)
+
+    // expression statement (print calls, etc.)
+    let expr_stmt_id = alloc_node("expr_stmt")
+    let expr_stmt_node = g_nodes[expr_stmt_id]
+    expr_stmt_node.child1 = parse_expression(state, tokens)
+    p_match(state, tokens, "NEWLINE")
+    give back expr_stmt_id
+
+// ── let ───────────────────────────────────────────────────────────────────────
+
+define parse_let(state, tokens):
+    let node_id = alloc_node("let")
+    let node = g_nodes[node_id]
+    when p_match(state, tokens, "MUTABLE"):
+        node.flag_val = true
+    let name_token = p_expect(state, tokens, "IDENT", "Expected variable name after 'let'")
+    node.name = name_token.value
+    p_expect(state, tokens, "ASSIGN", "Expected '=' after variable name")
+    node.child1 = parse_expression(state, tokens)
+    p_match(state, tokens, "NEWLINE")
+    give back node_id
+
+// ── define ────────────────────────────────────────────────────────────────────
+
+define parse_define(state, tokens):
+    let node_id = alloc_node("define")
+    let node = g_nodes[node_id]
+    let name_token = p_expect(state, tokens, "IDENT", "Expected function name")
+    node.name = name_token.value
+    p_expect(state, tokens, "LPAREN", "Expected '('")
+    let param_str = StrRef { s: "" }
+    p_skip_struct(state, tokens)
+    when not (p_check(state, tokens, "RPAREN")):
+        as long as true:
+            p_skip_struct(state, tokens)
+            let param_token = p_expect(state, tokens, "IDENT", "Expected parameter name")
+            when param_str.s is "":
+                param_str.s = param_token.value
+            otherwise:
+                param_str.s = param_str.s + "," + param_token.value
+            p_skip_struct(state, tokens)
+            when not (p_match(state, tokens, "COMMA")): stop
+    p_skip_struct(state, tokens)
+    p_expect(state, tokens, "RPAREN", "Expected ')'")
+    node.str_val = param_str.s
+    node.child1 = parse_block(state, tokens)
+    give back node_id
+
+// ── shape definition ──────────────────────────────────────────────────────────
+
+define parse_shape_def(state, tokens):
+    let shape_def_id = alloc_node("shape_def")
+    let shape_def_node = g_nodes[shape_def_id]
+    let shape_name_token = p_expect(state, tokens, "IDENT", "Expected shape name")
+    shape_def_node.name = shape_name_token.value
+    p_expect(state, tokens, "COLON", "Expected ':'")
+    p_expect(state, tokens, "NEWLINE", "Expected newline after shape name")
+    p_expect(state, tokens, "INDENT", "Expected indent")
+    let field_linker = linker_new()
+    as long as not (p_check(state, tokens, "DEDENT")) and not (p_at_end(state, tokens)):
+        p_skip_nl(state, tokens)
+        when p_check(state, tokens, "DEDENT") or p_at_end(state, tokens): stop
+        let field_name_token = p_expect(state, tokens, "IDENT", "Expected field name")
+        p_expect(state, tokens, "COLON", "Expected ':' after field name")
+        let type_token = p_peek(state, tokens)
+        let type_str = StrRef { s: "text" }
+        when type_token.kind is "TYPE_TEXT":
+            type_str.s = "text"
+            state.pos = state.pos + 1
+        when type_token.kind is "TYPE_NUMBER":
+            type_str.s = "number"
+            state.pos = state.pos + 1
+        when type_token.kind is "TYPE_DECIMAL":
+            type_str.s = "decimal"
+            state.pos = state.pos + 1
+        when type_token.kind is "TYPE_FLAG":
+            type_str.s = "flag"
+            state.pos = state.pos + 1
+        when type_token.kind is "OWN":
+            state.pos = state.pos + 1
+            let own_type_token = p_expect(state, tokens, "IDENT", "Expected shape name after 'own'")
+            type_str.s = "own " + own_type_token.value
+        p_skip_nl(state, tokens)
+        let field_id = alloc_node("shape_field")
+        let field_node = g_nodes[field_id]
+        field_node.name = field_name_token.value
+        field_node.str_val = type_str.s
+        linker_add(field_linker, field_id)
+    p_expect(state, tokens, "DEDENT", "Expected dedent")
+    shape_def_node.child1 = field_linker.first
+    give back shape_def_id
+
+// ── if / otherwise when / otherwise ──────────────────────────────────────────
+
+define parse_if(state, tokens):
+    let node_id = alloc_node("if")
+    let node = g_nodes[node_id]
+    node.child1 = parse_expression(state, tokens)
+    node.child2 = parse_block(state, tokens)
+    p_skip_nl(state, tokens)
+    when p_check(state, tokens, "OTHERWISE"):
+        state.pos = state.pos + 1
+        when p_match(state, tokens, "WHEN"):
+            node.child3 = parse_if(state, tokens)
+        otherwise:
+            node.child3 = parse_block(state, tokens)
+    give back node_id
+
+// ── while ─────────────────────────────────────────────────────────────────────
+
+define parse_while(state, tokens):
+    let node_id = alloc_node("while")
+    let node = g_nodes[node_id]
+    node.child1 = parse_expression(state, tokens)
+    node.child2 = parse_block(state, tokens)
+    give back node_id
+
+// ── for each ─────────────────────────────────────────────────────────────────
+
+define parse_for_each(state, tokens):
+    let node_id = alloc_node("for_each")
+    let node = g_nodes[node_id]
+    let var_token = p_expect(state, tokens, "IDENT", "Expected loop variable")
+    node.name = var_token.value
+    p_expect(state, tokens, "IN", "Expected 'in'")
+    node.child1 = parse_expression(state, tokens)
+    node.child2 = parse_block(state, tokens)
+    give back node_id
+
+// ── field assign ──────────────────────────────────────────────────────────────
+
+define parse_field_assign(state, tokens):
+    let node_id = alloc_node("field_assign")
+    let node = g_nodes[node_id]
+    node.name    = p_advance(state, tokens).value  // variable
+    p_advance(state, tokens)                        // .
+    node.str_val = p_advance(state, tokens).value  // field
+    p_advance(state, tokens)                        // =
+    node.child1 = parse_expression(state, tokens)
+    p_match(state, tokens, "NEWLINE")
+    give back node_id
+
+// ── Expressions (precedence: or < and < not < == < comparisons < + - < * / < unary < postfix < primary)
+
+define parse_expression(state, tokens):
+    give back parse_or(state, tokens)
+
+define parse_or(state, tokens):
+    let left_ref = NodeRef { id: parse_and(state, tokens) }
+    as long as p_check(state, tokens, "OR"):
+        state.pos = state.pos + 1
+        let right_id = parse_and(state, tokens)
+        let node_id = alloc_node("binary")
+        let node = g_nodes[node_id]
+        node.op = "or"
+        node.child1 = left_ref.id
+        node.child2 = right_id
+        left_ref.id = node_id
+    give back left_ref.id
+
+define parse_and(state, tokens):
+    let left_ref = NodeRef { id: parse_not(state, tokens) }
+    as long as p_check(state, tokens, "AND"):
+        state.pos = state.pos + 1
+        let right_id = parse_not(state, tokens)
+        let node_id = alloc_node("binary")
+        let node = g_nodes[node_id]
+        node.op = "and"
+        node.child1 = left_ref.id
+        node.child2 = right_id
+        left_ref.id = node_id
+    give back left_ref.id
+
+define parse_not(state, tokens):
+    when p_check(state, tokens, "NOT"):
+        state.pos = state.pos + 1
+        let node_id = alloc_node("unary")
+        let node = g_nodes[node_id]
+        node.op = "not"
+        node.child1 = parse_not(state, tokens)
+        give back node_id
+    give back parse_equality(state, tokens)
+
+define parse_equality(state, tokens):
+    let left_ref = NodeRef { id: parse_comparison(state, tokens) }
+    as long as (p_check(state, tokens, "EQ") or
+                p_check(state, tokens, "NEQ") or
+                p_check(state, tokens, "IS")):
+        let op_token = p_advance(state, tokens)
+        let right_id = parse_comparison(state, tokens)
+        let node_id = alloc_node("binary")
+        let node = g_nodes[node_id]
+        node.op = op_token.value
+        node.child1 = left_ref.id
+        node.child2 = right_id
+        left_ref.id = node_id
+    give back left_ref.id
+
+define parse_comparison(state, tokens):
+    let left_ref = NodeRef { id: parse_term(state, tokens) }
+    as long as (p_check(state, tokens, "LT") or
+                p_check(state, tokens, "GT") or
+                p_check(state, tokens, "LTE") or
+                p_check(state, tokens, "GTE")):
+        let op_token = p_advance(state, tokens)
+        let right_id = parse_term(state, tokens)
+        let node_id = alloc_node("binary")
+        let node = g_nodes[node_id]
+        node.op = op_token.value
+        node.child1 = left_ref.id
+        node.child2 = right_id
+        left_ref.id = node_id
+    give back left_ref.id
+
+define parse_term(state, tokens):
+    let left_ref = NodeRef { id: parse_factor(state, tokens) }
+    as long as p_check(state, tokens, "PLUS") or p_check(state, tokens, "MINUS"):
+        let op_token = p_advance(state, tokens)
+        let right_id = parse_factor(state, tokens)
+        let node_id = alloc_node("binary")
+        let node = g_nodes[node_id]
+        node.op = op_token.value
+        node.child1 = left_ref.id
+        node.child2 = right_id
+        left_ref.id = node_id
+    give back left_ref.id
+
+define parse_factor(state, tokens):
+    let left_ref = NodeRef { id: parse_unary(state, tokens) }
+    as long as p_check(state, tokens, "STAR") or p_check(state, tokens, "SLASH"):
+        let op_token = p_advance(state, tokens)
+        let right_id = parse_unary(state, tokens)
+        let node_id = alloc_node("binary")
+        let node = g_nodes[node_id]
+        node.op = op_token.value
+        node.child1 = left_ref.id
+        node.child2 = right_id
+        left_ref.id = node_id
+    give back left_ref.id
+
+define parse_unary(state, tokens):
+    when p_check(state, tokens, "MINUS"):
+        state.pos = state.pos + 1
+        let node_id = alloc_node("unary")
+        let node = g_nodes[node_id]
+        node.op = "-"
+        node.child1 = parse_unary(state, tokens)
+        give back node_id
+    give back parse_postfix(state, tokens)
+
+define parse_postfix(state, tokens):
+    let result_ref = NodeRef { id: parse_primary(state, tokens) }
+    as long as true:
+        when p_check(state, tokens, "LPAREN"):
+            // Only ident nodes are valid callees
+            let callee_node = g_nodes[result_ref.id]
+            when not (callee_node.kind is "ident"): stop
+            state.pos = state.pos + 1
+            let call_id = alloc_node("call")
+            let call_node = g_nodes[call_id]
+            call_node.name = callee_node.name
+            let arg_linker = linker_new()
+            p_skip_struct(state, tokens)
+            when not (p_check(state, tokens, "RPAREN")):
+                as long as true:
+                    p_skip_struct(state, tokens)
+                    linker_add(arg_linker, parse_expression(state, tokens))
+                    p_skip_struct(state, tokens)
+                    when not (p_match(state, tokens, "COMMA")): stop
+            p_skip_struct(state, tokens)
+            p_expect(state, tokens, "RPAREN", "Expected ')'")
+            call_node.child1 = arg_linker.first
+            result_ref.id = call_id
+
+        otherwise when p_check(state, tokens, "LBRACKET"):
+            state.pos = state.pos + 1
+            let index_id = alloc_node("index")
+            let index_node = g_nodes[index_id]
+            index_node.child1 = result_ref.id
+            p_skip_struct(state, tokens)
+            index_node.child2 = parse_expression(state, tokens)
+            p_skip_struct(state, tokens)
+            p_expect(state, tokens, "RBRACKET", "Expected ']'")
+            result_ref.id = index_id
+
+        otherwise when p_check(state, tokens, "DOT"):
+            state.pos = state.pos + 1
+            let field_token = p_expect(state, tokens, "IDENT", "Expected field name after '.'")
+            let field_access_id = alloc_node("field_access")
+            let field_access_node = g_nodes[field_access_id]
+            field_access_node.name = field_token.value
+            field_access_node.child1 = result_ref.id
+            result_ref.id = field_access_id
+
+        otherwise: stop
+
+    give back result_ref.id
+
+define parse_primary(state, tokens):
+    let token = p_peek(state, tokens)
+
+    when token.kind is "NUMBER":
+        state.pos = state.pos + 1
+        let node_id = alloc_node("number")
+        let node = g_nodes[node_id]
+        node.num_val = to_number(token.value)
+        give back node_id
+
+    when token.kind is "STRING":
+        state.pos = state.pos + 1
+        let node_id = alloc_node("string")
+        let node = g_nodes[node_id]
+        node.str_val = token.value
+        give back node_id
+
+    when token.kind is "TRUE":
+        state.pos = state.pos + 1
+        let node_id = alloc_node("bool")
+        let node = g_nodes[node_id]
+        node.flag_val = true
+        give back node_id
+
+    when token.kind is "FALSE":
+        state.pos = state.pos + 1
+        let node_id = alloc_node("bool")
+        let node = g_nodes[node_id]
+        node.flag_val = false
+        give back node_id
+
+    when token.kind is "NOTHING":
+        state.pos = state.pos + 1
+        give back alloc_node("nothing")
+
+    // Parenthesised expression
+    when token.kind is "LPAREN":
+        state.pos = state.pos + 1
+        p_skip_struct(state, tokens)
+        let inner_id = parse_expression(state, tokens)
+        p_skip_struct(state, tokens)
+        p_expect(state, tokens, "RPAREN", "Expected ')'")
+        give back inner_id
+
+    // List literal
+    when token.kind is "LBRACKET":
+        state.pos = state.pos + 1
+        let list_id = alloc_node("list_expr")
+        let list_node = g_nodes[list_id]
+        let elem_linker = linker_new()
+        p_skip_struct(state, tokens)
+        when not (p_check(state, tokens, "RBRACKET")):
+            as long as true:
+                p_skip_struct(state, tokens)
+                linker_add(elem_linker, parse_expression(state, tokens))
+                p_skip_struct(state, tokens)
+                when not (p_match(state, tokens, "COMMA")): stop
+        p_skip_struct(state, tokens)
+        p_expect(state, tokens, "RBRACKET", "Expected ']'")
+        list_node.child1 = elem_linker.first
+        give back list_id
+
+    // Identifier or shape instantiation
+    when token.kind is "IDENT":
+        state.pos = state.pos + 1
+        when p_check(state, tokens, "LBRACE"):
+            state.pos = state.pos + 1
+            let shape_inst_id = alloc_node("shape_inst")
+            let shape_inst_node = g_nodes[shape_inst_id]
+            shape_inst_node.name = token.value
+            let field_init_linker = linker_new()
+            p_skip_struct(state, tokens)
+            when not (p_check(state, tokens, "RBRACE")):
+                as long as true:
+                    p_skip_struct(state, tokens)
+                    when p_check(state, tokens, "RBRACE"): stop
+                    let field_name_token = p_expect(state, tokens, "IDENT", "Expected field name")
+                    p_expect(state, tokens, "COLON", "Expected ':' after field name")
+                    let field_val_id = parse_expression(state, tokens)
+                    let field_init_id = alloc_node("shape_field_init")
+                    let field_init_node = g_nodes[field_init_id]
+                    field_init_node.name = field_name_token.value
+                    field_init_node.child1 = field_val_id
+                    linker_add(field_init_linker, field_init_id)
+                    p_skip_struct(state, tokens)
+                    when not (p_match(state, tokens, "COMMA")): stop
+            p_skip_struct(state, tokens)
+            p_expect(state, tokens, "RBRACE", "Expected '}'")
+            shape_inst_node.child1 = field_init_linker.first
+            give back shape_inst_id
+        let ident_id = alloc_node("ident")
+        let ident_node = g_nodes[ident_id]
+        ident_node.name = token.value
+        give back ident_id
+
+    // Error recovery
+    state.had_error = true
+    state.error_msg = "Unexpected token '" + token.value + "' at line " + to_text(token.line)
+    state.pos = state.pos + 1
+    give back alloc_node("nothing")
+
+// ── Entry point ───────────────────────────────────────────────────────────────
+
+define parse(tokens):
+    let state = ParseState { pos: 0, had_error: false, error_msg: "" }
+    let prog_linker = linker_new()
+    p_skip_nl(state, tokens)
+    as long as not (p_at_end(state, tokens)):
+        p_skip_nl(state, tokens)
+        when p_at_end(state, tokens): stop
+        let stmt_id = parse_statement(state, tokens)
+        when stmt_id >= 0:
+            linker_add(prog_linker, stmt_id)
+        when state.had_error:
+            print("Parse error: " + state.error_msg)
+            stop
+        p_skip_nl(state, tokens)
+    give back prog_linker.first

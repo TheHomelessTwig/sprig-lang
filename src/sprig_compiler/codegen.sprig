@@ -1,0 +1,423 @@
+// ── src/sprig_compiler/codegen.sprig ─────────────────────────────────────────
+// Walks the g_nodes AST pool from parser.sprig and emits C source code.
+// All values in the emitted program use the universal SprigVal type.
+
+// ── Code generation state ─────────────────────────────────────────────────────
+
+shape CgState:
+    out: text
+    indent: number
+    tmp: number
+
+define cg_new():
+    give back CgState { out: "", indent: 0, tmp: 0 }
+
+define cg_push(state): state.indent = state.indent + 1
+define cg_pop(state):  state.indent = state.indent - 1
+
+define cg_ind(state):
+    let result = StrRef { s: "" }
+    let counter = NodeRef { id: 0 }
+    as long as counter.id < state.indent:
+        result.s = result.s + "    "
+        counter.id = counter.id + 1
+    give back result.s
+
+define cg_line(state, content):
+    state.out = state.out + cg_ind(state) + content + "\n"
+
+define cg_raw(state, content):
+    state.out = state.out + content
+
+define cg_tmp(state):
+    state.tmp = state.tmp + 1
+    give back "_tmp" + to_text(state.tmp)
+
+// ── Identifier mangling ───────────────────────────────────────────────────────
+// Prefix all user identifiers to avoid clashes with C keywords / runtime names.
+
+define mangle(name):
+    give back "_s_" + name
+
+// ── Built-in → C runtime function name ───────────────────────────────────────
+
+define builtin_c(name):
+    when name is "print":           give back "sprig_print"
+    when name is "length":          give back "sprig_length"
+    when name is "append":          give back "sprig_append"
+    when name is "first":           give back "sprig_first"
+    when name is "last":            give back "sprig_last"
+    when name is "pop":             give back "sprig_pop"
+    when name is "to_number":       give back "sprig_to_number"
+    when name is "to_text":         give back "sprig_to_text"
+    when name is "char_code":       give back "sprig_char_code"
+    when name is "char_from_code":  give back "sprig_char_from_code"
+    when name is "substring":       give back "sprig_substring"
+    when name is "string_contains": give back "sprig_string_contains"
+    when name is "read_file":       give back "sprig_read_file"
+    when name is "write_file":      give back "sprig_write_file"
+    when name is "args_count":      give back "sprig_args_count"
+    when name is "args_get":        give back "sprig_args_get"
+    when name is "exit":            give back "sprig_exit"
+    give back ""
+
+// ── Operator → C function ─────────────────────────────────────────────────────
+
+define op_c(op):
+    when op is "+":   give back "sv_add"
+    when op is "-":   give back "sv_sub"
+    when op is "*":   give back "sv_mul"
+    when op is "/":   give back "sv_div"
+    when op is ">":   give back "sv_gt"
+    when op is "<":   give back "sv_lt"
+    when op is ">=":  give back "sv_gte"
+    when op is "<=":  give back "sv_lte"
+    when op is "==":  give back "sv_eq_val"
+    when op is "is":  give back "sv_eq_val"
+    when op is "!=":  give back "sv_ne"
+    when op is "and": give back "sv_and"
+    when op is "or":  give back "sv_or"
+    give back "sv_add"
+
+// ── String escaping for C string literals ────────────────────────────────────
+
+define c_str(raw):
+    let result = StrRef { s: "\"" }
+    let char_idx = NodeRef { id: 0 }
+    let str_len = length(raw)
+    as long as char_idx.id < str_len:
+        let current_char = raw[char_idx.id]
+        let ascii_code = char_code(current_char)
+        when ascii_code is 10:  result.s = result.s + "\\n"
+        otherwise when ascii_code is 9:  result.s = result.s + "\\t"
+        otherwise when ascii_code is 13: result.s = result.s + "\\r"
+        otherwise when ascii_code is 92: result.s = result.s + "\\\\"
+        otherwise when ascii_code is 34: result.s = result.s + "\\\""
+        otherwise: result.s = result.s + current_char
+        char_idx.id = char_idx.id + 1
+    give back result.s + "\""
+
+// ── CSV helpers for function parameter lists ──────────────────────────────────
+
+define split_csv(csv):
+    let parts = []
+    when csv is "": give back parts
+    let current_part = StrRef { s: "" }
+    let char_idx = NodeRef { id: 0 }
+    let str_len = length(csv)
+    as long as char_idx.id < str_len:
+        let current_char = csv[char_idx.id]
+        when current_char is ",":
+            append(parts, current_part.s)
+            current_part.s = ""
+        otherwise:
+            current_part.s = current_part.s + current_char
+        char_idx.id = char_idx.id + 1
+    when not (current_part.s is ""):
+        append(parts, current_part.s)
+    give back parts
+
+define build_params(param_csv):
+    let parts = split_csv(param_csv)
+    when length(parts) is 0: give back ""
+    let result = StrRef { s: "" }
+    for each param in parts:
+        when not (result.s is ""): result.s = result.s + ", "
+        result.s = result.s + "SprigVal " + mangle(param)
+    give back result.s
+
+// ── Variable collection (pre-declare all locals at function top) ──────────────
+
+define list_has(items, item):
+    for each value in items:
+        when value is item: give back true
+    give back false
+
+define collect_vars(first_id, names):
+    let current = NodeRef { id: first_id }
+    as long as current.id >= 0:
+        let node = g_nodes[current.id]
+        when node.kind is "let":
+            when not (list_has(names, node.name)):
+                append(names, node.name)
+        when node.kind is "if":
+            collect_vars(node.child2, names)
+            when node.child3 >= 0:
+                let else_node = g_nodes[node.child3]
+                when else_node.kind is "if":
+                    collect_vars_if(node.child3, names)
+                otherwise:
+                    collect_vars(node.child3, names)
+        when node.kind is "while":
+            collect_vars(node.child2, names)
+        when node.kind is "for_each":
+            when not (list_has(names, node.name)):
+                append(names, node.name)
+            collect_vars(node.child2, names)
+        current.id = node.next
+
+define collect_vars_if(node_id, names):
+    let node = g_nodes[node_id]
+    collect_vars(node.child2, names)
+    when node.child3 >= 0:
+        let else_node = g_nodes[node.child3]
+        when else_node.kind is "if":
+            collect_vars_if(node.child3, names)
+        otherwise:
+            collect_vars(node.child3, names)
+
+// ── Expression emission ───────────────────────────────────────────────────────
+
+define emit_expr(node_id):
+    when node_id < 0: give back "sv_nil()"
+    let node = g_nodes[node_id]
+
+    when node.kind is "number":
+        give back "sv_num(" + to_text(node.num_val) + ")"
+
+    when node.kind is "string":
+        give back "sv_str(" + c_str(node.str_val) + ")"
+
+    when node.kind is "bool":
+        when node.flag_val: give back "sv_bool(1)"
+        give back "sv_bool(0)"
+
+    when node.kind is "nothing":
+        give back "sv_nil()"
+
+    when node.kind is "ident":
+        give back mangle(node.name)
+
+    when node.kind is "binary":
+        give back op_c(node.op) + "(" + emit_expr(node.child1) + "," + emit_expr(node.child2) + ")"
+
+    when node.kind is "unary":
+        when node.op is "not": give back "sv_not(" + emit_expr(node.child1) + ")"
+        give back "sv_neg(" + emit_expr(node.child1) + ")"
+
+    when node.kind is "index":
+        give back "sv_index(" + emit_expr(node.child1) + "," + emit_expr(node.child2) + ")"
+
+    when node.kind is "field_access":
+        give back "shape_get(" + emit_expr(node.child1) + ".shape,\"" + node.name + "\")"
+
+    when node.kind is "call":
+        let c_func_name = StrRef { s: builtin_c(node.name) }
+        when c_func_name.s is "": c_func_name.s = mangle(node.name)
+        let args_str = StrRef { s: "" }
+        let arg_ref = NodeRef { id: node.child1 }
+        as long as arg_ref.id >= 0:
+            let arg_node = g_nodes[arg_ref.id]
+            when not (args_str.s is ""): args_str.s = args_str.s + ","
+            args_str.s = args_str.s + emit_expr(arg_ref.id)
+            arg_ref.id = arg_node.next
+        give back c_func_name.s + "(" + args_str.s + ")"
+
+    when node.kind is "list_expr":
+        when node.child1 < 0: give back "sv_list(list_new())"
+        let elem_str = StrRef { s: "" }
+        let elem_count = NodeRef { id: 0 }
+        let elem_ref = NodeRef { id: node.child1 }
+        as long as elem_ref.id >= 0:
+            let elem_node = g_nodes[elem_ref.id]
+            when not (elem_str.s is ""): elem_str.s = elem_str.s + ","
+            elem_str.s = elem_str.s + emit_expr(elem_ref.id)
+            elem_count.id = elem_count.id + 1
+            elem_ref.id = elem_node.next
+        give back "sv_list_of_arr(" + to_text(elem_count.id) + ",(SprigVal[]){" + elem_str.s + "})"
+
+    when node.kind is "shape_inst":
+        let key_str = StrRef { s: "" }
+        let val_str = StrRef { s: "" }
+        let field_count = NodeRef { id: 0 }
+        let field_ref = NodeRef { id: node.child1 }
+        as long as field_ref.id >= 0:
+            let field_node = g_nodes[field_ref.id]
+            when not (key_str.s is ""): key_str.s = key_str.s + ","
+            when not (val_str.s is ""): val_str.s = val_str.s + ","
+            key_str.s = key_str.s + "\"" + field_node.name + "\""
+            val_str.s = val_str.s + emit_expr(field_node.child1)
+            field_count.id = field_count.id + 1
+            field_ref.id = field_node.next
+        give back "sv_shape(shape_new(\"" + node.name + "\",(const char*[]){" + key_str.s + "},(SprigVal[]){" + val_str.s + "}," + to_text(field_count.id) + "))"
+
+    give back "sv_nil()/*?" + node.kind + "*/"
+
+// ── Statement emission ────────────────────────────────────────────────────────
+
+define emit_block(state, first_id):
+    let current = NodeRef { id: first_id }
+    as long as current.id >= 0:
+        let node = g_nodes[current.id]
+        emit_stmt(state, current.id)
+        current.id = node.next
+
+define emit_stmt(state, node_id):
+    when node_id < 0: give back nothing
+    let node = g_nodes[node_id]
+
+    when node.kind is "let":
+        cg_line(state, mangle(node.name) + " = " + emit_expr(node.child1) + ";")
+
+    when node.kind is "expr_stmt":
+        cg_line(state, emit_expr(node.child1) + ";")
+
+    when node.kind is "return":
+        when node.child1 < 0:
+            cg_line(state, "return sv_nil();")
+        otherwise:
+            cg_line(state, "return " + emit_expr(node.child1) + ";")
+
+    when node.kind is "stop":
+        cg_line(state, "break;")
+
+    when node.kind is "skip":
+        cg_line(state, "continue;")
+
+    when node.kind is "field_assign":
+        cg_line(state, "shape_set(" + mangle(node.name) + ".shape,\"" + node.str_val + "\"," + emit_expr(node.child1) + ");")
+
+    when node.kind is "if":
+        emit_if(state, node_id)
+
+    when node.kind is "while":
+        cg_line(state, "while(sv_truthy(" + emit_expr(node.child1) + ")){")
+        cg_push(state)
+        emit_block(state, node.child2)
+        cg_pop(state)
+        cg_line(state, "}")
+
+    when node.kind is "for_each":
+        let iter_var = cg_tmp(state)
+        cg_line(state, "{ SprigVal " + iter_var + "=" + emit_expr(node.child1) + ";")
+        cg_push(state)
+        cg_line(state, "for(int _fi=0;_fi<" + iter_var + ".list->len;_fi++){")
+        cg_push(state)
+        cg_line(state, mangle(node.name) + "=" + iter_var + ".list->data[_fi];")
+        emit_block(state, node.child2)
+        cg_pop(state)
+        cg_line(state, "}")
+        cg_pop(state)
+        cg_line(state, "}")
+
+    // define / shape_def / include — handled in codegen() first pass, skip here
+
+define emit_if(state, node_id):
+    let node = g_nodes[node_id]
+    cg_line(state, "if(sv_truthy(" + emit_expr(node.child1) + ")){")
+    cg_push(state)
+    emit_block(state, node.child2)
+    cg_pop(state)
+    when node.child3 < 0:
+        cg_line(state, "}")
+        give back nothing
+    let else_node = g_nodes[node.child3]
+    when else_node.kind is "if":
+        state.out = state.out + cg_ind(state) + "} else "
+        emit_else_if(state, node.child3)
+    otherwise:
+        cg_line(state, "} else {")
+        cg_push(state)
+        emit_block(state, node.child3)
+        cg_pop(state)
+        cg_line(state, "}")
+
+define emit_else_if(state, node_id):
+    let node = g_nodes[node_id]
+    state.out = state.out + "if(sv_truthy(" + emit_expr(node.child1) + ")){\n"
+    cg_push(state)
+    emit_block(state, node.child2)
+    cg_pop(state)
+    when node.child3 < 0:
+        cg_line(state, "}")
+        give back nothing
+    let else_node = g_nodes[node.child3]
+    when else_node.kind is "if":
+        state.out = state.out + cg_ind(state) + "} else "
+        emit_else_if(state, node.child3)
+    otherwise:
+        cg_line(state, "} else {")
+        cg_push(state)
+        emit_block(state, node.child3)
+        cg_pop(state)
+        cg_line(state, "}")
+
+// ── Function emission ─────────────────────────────────────────────────────────
+
+define emit_function(state, node_id, top_globals):
+    let node = g_nodes[node_id]
+    cg_line(state, "SprigVal " + mangle(node.name) + "(" + build_params(node.str_val) + "){")
+    cg_push(state)
+
+    // Pre-declare all local variables at function top (avoids C redeclaration errors)
+    let param_list = split_csv(node.str_val)
+    let locals = []
+    collect_vars(node.child1, locals)
+    for each var_name in locals:
+        when not (list_has(param_list, var_name)) and not (list_has(top_globals, var_name)):
+            cg_line(state, "SprigVal " + mangle(var_name) + ";")
+
+    emit_block(state, node.child1)
+    cg_line(state, "return sv_nil();")
+    cg_pop(state)
+    cg_line(state, "}")
+
+// ── Top-level codegen ─────────────────────────────────────────────────────────
+
+define codegen(first_stmt):
+    let state = cg_new()
+
+    // Embed runtime header
+    cg_raw(state, read_file("src/sprig_compiler/runtime.h"))
+    cg_raw(state, "\n")
+
+    // First pass: categorize top-level nodes
+    let func_ids     = []   // define node IDs
+    let global_names = []   // top-level let variable names
+    let top_stmts    = []   // all top-level non-define, non-shape nodes (in order)
+
+    let current = NodeRef { id: first_stmt }
+    as long as current.id >= 0:
+        let node = g_nodes[current.id]
+        when node.kind is "define":
+            append(func_ids, current.id)
+        otherwise when node.kind is "let":
+            when not (list_has(global_names, node.name)):
+                append(global_names, node.name)
+            append(top_stmts, current.id)
+        otherwise when node.kind is "shape_def":
+            // Shapes are runtime constructs — no C struct needed
+            skip
+        otherwise:
+            append(top_stmts, current.id)
+        current.id = node.next
+
+    // Emit global variable declarations
+    for each global_name in global_names:
+        cg_line(state, "SprigVal " + mangle(global_name) + ";")
+    cg_raw(state, "\n")
+
+    // Emit forward declarations for all user functions
+    for each func_id in func_ids:
+        let node = g_nodes[func_id]
+        cg_line(state, "SprigVal " + mangle(node.name) + "(" + build_params(node.str_val) + ");")
+    cg_raw(state, "\n")
+
+    // Emit function definitions
+    for each func_id in func_ids:
+        emit_function(state, func_id, global_names)
+        cg_raw(state, "\n")
+
+    // Emit main()
+    cg_line(state, "int main(int argc,char**argv){")
+    cg_push(state)
+    cg_line(state, "g_argc=argc; g_argv=argv;")
+
+    for each stmt_id in top_stmts:
+        emit_stmt(state, stmt_id)
+
+    cg_line(state, "return 0;")
+    cg_pop(state)
+    cg_line(state, "}")
+
+    give back state.out
