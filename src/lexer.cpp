@@ -80,12 +80,28 @@ static std::vector<Token> resolve_multiword(std::vector<Token> tokens) {
 static std::vector<Token> insert_indent_tokens(std::vector<Token> tokens) {
     std::vector<Token> out;
     std::vector<int>   indent_stack = {0};
+    int                bracket_depth = 0;
 
     size_t i = 0;
     while (i < tokens.size()) {
         Token& tok = tokens[i];
 
+        if (tok.type == TokenType::LPAREN   ||
+            tok.type == TokenType::LBRACKET ||
+            tok.type == TokenType::LBRACE)
+            bracket_depth++;
+        else if (tok.type == TokenType::RPAREN   ||
+                 tok.type == TokenType::RBRACKET ||
+                 tok.type == TokenType::RBRACE)
+            bracket_depth--;
+
         if (tok.type == TokenType::NEWLINE) {
+            if (bracket_depth > 0) {
+                // Inside brackets — swallow newline, no INDENT/DEDENT emitted
+                i++;
+                continue;
+            }
+
             out.push_back(tok);
             i++;
 
