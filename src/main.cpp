@@ -35,7 +35,8 @@ int main(int argc, char* argv[]) {
         } else if ((arg == "-o" || arg == "--output") && i + 1 < argc) {
             output_file = argv[++i];
         } else {
-            input_file = arg;
+            if (input_file.empty())
+                input_file = arg;
         }
     }
 
