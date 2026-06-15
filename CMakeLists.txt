@@ -48,6 +48,9 @@ configure_file(
     @ONLY
 )
 
+# Exclude lsp.cpp from the main binary (it has its own entry point)
+list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/lsp\\.cpp$")
+
 # Define the build executable target
 add_executable(${PROJECT_NAME} ${SOURCE_FILES})
 
@@ -95,3 +98,33 @@ install(TARGETS ${PROJECT_NAME}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBSUBDIR}
 )
+
+# ---------------------------------------------------------------------------
+# 7. SPRIG-LSP (Language Server Protocol server)
+# ---------------------------------------------------------------------------
+# Uses only the pipeline through borrow checker — no LLVM dependency.
+
+set(LSP_SOURCES
+    src/lexer.cpp
+    src/parser.cpp
+    src/typechecker.cpp
+    src/borrowchecker.cpp
+    src/lsp.cpp
+)
+
+find_package(nlohmann_json QUIET)
+
+add_executable(sprig-lsp ${LSP_SOURCES})
+target_include_directories(sprig-lsp PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_BINARY_DIR}/include
+)
+target_compile_options(sprig-lsp PRIVATE -Wall -Wextra -Wpedantic -Werror -std=c++17)
+
+if(nlohmann_json_FOUND)
+    target_link_libraries(sprig-lsp PRIVATE nlohmann_json::nlohmann_json)
+else()
+    message(STATUS "nlohmann_json CMake target not found — using system header")
+endif()
+
+install(TARGETS sprig-lsp DESTINATION ${CMAKE_INSTALL_BINDIR})
