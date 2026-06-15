@@ -310,7 +310,8 @@ ExpressionPointer Parser::equality() {
 // < / >
 ExpressionPointer Parser::comparison() {
     ExpressionPointer left = term();
-    while (check(TokenType::LT) || check(TokenType::GT)) {
+    while (check(TokenType::LT)  || check(TokenType::GT) ||
+           check(TokenType::LTE) || check(TokenType::GTE)) {
         std::string op      = advance().lexeme;
         int         op_line = previous().line;
         left = std::make_unique<BinaryExpression>(

@@ -57,6 +57,8 @@ enum class TokenType {
     NEQ,      // !=
     LT,       // <
     GT,       // >
+    LTE,      // <=
+    GTE,      // >=
 
     // Delimiters
     LPAREN,
@@ -173,6 +175,8 @@ inline std::string token_type_name(TokenType type) {
         case TokenType::NEQ:    return "NEQ";
         case TokenType::LT:     return "LT";
         case TokenType::GT:     return "GT";
+        case TokenType::LTE:    return "LTE";
+        case TokenType::GTE:    return "GTE";
 
         // Delimiters
         case TokenType::LPAREN:   return "LPAREN";

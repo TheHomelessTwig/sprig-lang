@@ -348,8 +348,10 @@ Value Interpreter::eval_expression(const Expression* e, Environment& env) {
                     make_error("Division by zero", binary_expr->line));
             return Value::make_number(left.number / right.number);
         }
-        if (binary_expr->op == ">") return Value::make_bool(left.number > right.number);
-        if (binary_expr->op == "<") return Value::make_bool(left.number < right.number);
+        if (binary_expr->op == ">")  return Value::make_bool(left.number >  right.number);
+        if (binary_expr->op == "<")  return Value::make_bool(left.number <  right.number);
+        if (binary_expr->op == ">=") return Value::make_bool(left.number >= right.number);
+        if (binary_expr->op == "<=") return Value::make_bool(left.number <= right.number);
 
         if (binary_expr->op == "==") {
             if (left.kind != right.kind) return Value::make_bool(false);

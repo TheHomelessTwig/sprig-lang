@@ -747,6 +747,8 @@ llvm::Value* CodeGen::gen_expr(const Expression* e) {
         if (binary_expr->op == "/")  return builder->CreateFDiv(left_value, right_value, "div");
         if (binary_expr->op == ">")  return builder->CreateFCmpOGT(left_value, right_value, "gt");
         if (binary_expr->op == "<")  return builder->CreateFCmpOLT(left_value, right_value, "lt");
+        if (binary_expr->op == ">=") return builder->CreateFCmpOGE(left_value, right_value, "ge");
+        if (binary_expr->op == "<=") return builder->CreateFCmpOLE(left_value, right_value, "le");
         if (binary_expr->op == "==" || binary_expr->op == "is") {
             if (left_value->getType() == bool_type())
                 return builder->CreateICmpEQ(left_value, right_value, "eq");

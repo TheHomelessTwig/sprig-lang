@@ -1,3 +1,4 @@
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -61,6 +62,22 @@ static std::string uri_to_path(const std::string& uri) {
     return uri;
 }
 
+// Walk up from the file's directory to find the project root (.git or
+// CMakeLists.txt). Falls back to the file's own directory. Used to set the
+// process CWD before analysis so that CWD-relative include resolution (the
+// same logic used by the CLI) works correctly under the LSP.
+static std::string find_project_root(const std::string& file_path) {
+    std::filesystem::path dir =
+        std::filesystem::path(file_path).parent_path();
+    while (!dir.empty() && dir != dir.parent_path()) {
+        if (std::filesystem::exists(dir / ".git") ||
+            std::filesystem::exists(dir / "CMakeLists.txt"))
+            return dir.string();
+        dir = dir.parent_path();
+    }
+    return std::filesystem::path(file_path).parent_path().string();
+}
+
 // Pull "at line N" out of exception messages so parse/lex errors land on the
 // right line instead of defaulting to 1.
 static int extract_line(const std::string& msg, int fallback = 1) {
@@ -89,6 +106,8 @@ static json make_diagnostic(int line, const std::string& message, int severity =
 static json analyse(const std::string& source, const std::string& uri) {
     json diagnostics = json::array();
     std::string path = uri_to_path(uri);
+    std::error_code ec;
+    std::filesystem::current_path(find_project_root(path), ec);
 
     try {
         Lexer lexer(source);

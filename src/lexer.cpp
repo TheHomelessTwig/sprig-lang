@@ -175,8 +175,8 @@ void Lexer::scan_token(std::vector<Token>& tokens) {
         // One- or two-character operators
         case '=': add(tokens, match('=') ? TokenType::EQ  : TokenType::ASSIGN);  break;
         case '!': add(tokens, match('=') ? TokenType::NEQ : TokenType::ILLEGAL); break;
-        case '<': add(tokens, TokenType::LT); break;
-        case '>': add(tokens, TokenType::GT); break;
+        case '<': add(tokens, match('=') ? TokenType::LTE : TokenType::LT); break;
+        case '>': add(tokens, match('=') ? TokenType::GTE : TokenType::GT); break;
 
         // Whitespace (ignored)
         case ' ':
