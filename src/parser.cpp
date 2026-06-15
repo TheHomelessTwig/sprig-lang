@@ -51,7 +51,14 @@ Program Parser::parse() {
 
 // Everything between a ':' + INDENT and the matching DEDENT.
 Block Parser::block() {
-    expect(TokenType::COLON,   "Expected ':' before block");
+    expect(TokenType::COLON, "Expected ':'");
+
+    if (!check(TokenType::NEWLINE) && !at_end()) {
+        Block b;
+        b.stmts.push_back(statement());
+        return b;
+    }
+
     expect(TokenType::NEWLINE, "Expected newline after ':'");
     expect(TokenType::INDENT,  "Expected indented block");
     Block b;
