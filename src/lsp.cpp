@@ -61,6 +61,16 @@ static std::string uri_to_path(const std::string& uri) {
     return uri;
 }
 
+// Pull "at line N" out of exception messages so parse/lex errors land on the
+// right line instead of defaulting to 1.
+static int extract_line(const std::string& msg, int fallback = 1) {
+    auto pos = msg.rfind("at line ");
+    if (pos != std::string::npos) {
+        try { return std::stoi(msg.substr(pos + 8)); } catch (...) {}
+    }
+    return fallback;
+}
+
 static json make_diagnostic(int line, const std::string& message, int severity = 1) {
     int lsp_line = std::max(0, line - 1); // LSP lines are 0-indexed
     return {
@@ -86,7 +96,7 @@ static json analyse(const std::string& source, const std::string& uri) {
         try {
             tokens = lexer.tokenize();
         } catch (std::exception& e) {
-            diagnostics.push_back(make_diagnostic(1, e.what()));
+            diagnostics.push_back(make_diagnostic(extract_line(e.what()), e.what()));
             return diagnostics;
         }
 
@@ -95,7 +105,7 @@ static json analyse(const std::string& source, const std::string& uri) {
         try {
             program = parser.parse();
         } catch (std::exception& e) {
-            diagnostics.push_back(make_diagnostic(1, e.what()));
+            diagnostics.push_back(make_diagnostic(extract_line(e.what()), e.what()));
             return diagnostics;
         }
 
@@ -108,7 +118,7 @@ static json analyse(const std::string& source, const std::string& uri) {
             diagnostics.push_back(make_diagnostic(err.line, err.message));
 
     } catch (std::exception& e) {
-        diagnostics.push_back(make_diagnostic(1, e.what()));
+        diagnostics.push_back(make_diagnostic(extract_line(e.what()), e.what()));
     }
 
     return diagnostics;
