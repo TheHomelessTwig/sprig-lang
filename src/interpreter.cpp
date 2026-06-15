@@ -159,8 +159,13 @@ void Interpreter::eval_statement(const Statement* s, Environment& env) {
         std::string path = include_stmt->path;
 
         // Resolve relative to the including file's directory
-        if (!base_path.empty() && !path.empty() && path[0] != '/')
-            path = base_path + "/" + path;
+        if (path[0] != '/') {
+            std::string cwd_path = std::filesystem::current_path().string() + "/" + path;
+            if (!std::filesystem::exists(cwd_path) && !base_path.empty())
+                path = base_path + "/" + path;
+            else
+                path = cwd_path;
+        }
 
         // Deduplicate: skip if already included
         std::string canonical;

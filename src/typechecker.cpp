@@ -105,8 +105,13 @@ void TypeChecker::process_program(const Program& program) {
 // Load, parse, and process an included file in the current scope.
 void TypeChecker::process_include(const IncludeStatement* include_stmt) {
     std::string path = include_stmt->path;
-    if (!base_path.empty() && !path.empty() && path[0] != '/')
-        path = base_path + "/" + path;
+    if (path[0] != '/') {
+        std::string cwd_path = std::filesystem::current_path().string() + "/" + path;
+        if (!std::filesystem::exists(cwd_path) && !base_path.empty())
+            path = base_path + "/" + path;
+        else
+            path = cwd_path;
+    }
 
     std::string canonical;
     try {
