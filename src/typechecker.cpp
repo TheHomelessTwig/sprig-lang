@@ -374,12 +374,17 @@ TypePtr TypeChecker::infer_expression(const Expression* e) {
         return record(Type::make_list(resolve(element_type)));
     }
 
-    // collection[i]
+    // collection[i] or string[i]
     if (auto* index_expr = dynamic_cast<const IndexExpression*>(e)) {
-        TypePtr object_type  = infer_expression(index_expr->object.get());
-        TypePtr index_type   = infer_expression(index_expr->index.get());
+        TypePtr object_type = infer_expression(index_expr->object.get());
+        TypePtr index_type  = infer_expression(index_expr->index.get());
+        unify(index_type, Type::make_number(), 0);
+
+        TypePtr resolved_obj = resolve(object_type);
+        if (resolved_obj->kind == Type::Kind::Text)
+            return record(Type::make_text());
+
         TypePtr element_type = fresh();
-        unify(index_type,  Type::make_number(), 0);
         unify(object_type, Type::make_list(element_type), 0);
         return record(resolve(element_type));
     }
