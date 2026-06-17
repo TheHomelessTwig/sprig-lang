@@ -4,7 +4,7 @@ A toy programming language with a custom English-like syntax. The primary implem
 
 Implements a lexer, recursive-descent parser, Hindley-Milner type checker, borrow checker, tree-walk interpreter, and LLVM IR code generator. Indentation-based — no braces or semicolons.
 
-An experimental self-hosted compiler — written in Sprig, compiling Sprig source to C — lives in `src/sprig_compiler/`. It is a work in progress: functions, loops, and shapes compile and run correctly. See [Self-hosted compiler](#self-hosted-compiler) below.
+A self-hosted compiler — written in Sprig, compiling Sprig source to C — lives in `src/sprig_compiler/`. It has reached a full bootstrap: the C++-compiled binary compiles the self-host source to `sprig2`, `sprig2` compiles that same source to `sprig3`, and `sprig3`'s output is byte-identical to `sprig2`'s — the C++ implementation is no longer in the lineage. See [Self-hosted compiler](#self-hosted-compiler) below.
 
 ## Build
 
@@ -42,7 +42,7 @@ gcc output.c -o program -lm
 
 The self-hosted compiler (lexer, parser, codegen) lives in `src/sprig_compiler/`. The C runtime in `src/sprig_compiler/runtime.h` provides the OS interface layer (I/O, allocation) for compiled programs.
 
-This is experimental and not yet at full parity with the C++ implementation. Functions, loops, and shapes work; if something fails, fall back to the C++ implementation (`./build/SPRIG-LANG`).
+It has bootstrapped — compiling itself produces output byte-identical to the previous generation. It is still narrower than the C++ implementation (fewer builtins, less complete error reporting); fall back to `./build/SPRIG-LANG` for anything it doesn't yet cover.
 
 ## Syntax
 

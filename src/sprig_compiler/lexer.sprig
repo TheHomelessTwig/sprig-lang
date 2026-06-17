@@ -19,6 +19,7 @@ shape LexerState:
     col:         number
     current_str: text    // accumulator for string/identifier values
     scratch:     number  // general-purpose counter (e.g. space counting)
+    paren_depth: number  // depth inside (), [], {} — suppresses indent tracking
 
 // ── Character helpers ─────────────────────────────────────────────────────────
 
@@ -78,7 +79,7 @@ define count_indent(source, start_pos, src_len):
     // LexerState is used here only for its pos and scratch fields — scratch accumulates the space count.
     let indent_counter = LexerState {
         source: source, pos: start_pos,
-        line: 0, col: 0, current_str: "", scratch: 0
+        line: 0, col: 0, current_str: "", scratch: 0, paren_depth: 0
     }
     as long as indent_counter.pos < src_len and (source[indent_counter.pos] is " " or source[indent_counter.pos] is "\t"):
         indent_counter.scratch = indent_counter.scratch + 1
@@ -92,7 +93,7 @@ define count_indent(source, start_pos, src_len):
 define scan_raw(source):
     let state = LexerState {
         source: source, pos: 0, line: 1,
-        col: 0, current_str: "", scratch: 0
+        col: 0, current_str: "", scratch: 0, paren_depth: 0
     }
     let mutable tokens = []
     let src_len = length(source)
@@ -126,7 +127,9 @@ define scan_raw(source):
 
             // Emit an INDENT_HINT so pass 2 knows the next line's indent level.
             // We use col field to carry the numeric level (not the text col).
-            when state.pos < src_len:
+            // Suppressed inside unclosed (), [], {} — a wrapped call argument
+            // list or literal spanning lines is not a nested indent block.
+            when state.pos < src_len and state.paren_depth <= 0:
                 let new_indent = count_indent(source, state.pos, src_len)
                 append(tokens, make_tok("INDENT_HINT", "", state.line, new_indent))
 
@@ -228,18 +231,20 @@ define scan_raw(source):
             append(tokens, make_tok("LT",       "<", state.line, tok_col)) state.pos = state.pos + 1 state.col = state.col + 1
         otherwise when ch is ">":
             append(tokens, make_tok("GT",       ">", state.line, tok_col)) state.pos = state.pos + 1 state.col = state.col + 1
+        // Track bracket depth so multi-line call/literal continuations don't
+        // get mistaken for nested indent blocks (see NEWLINE handling below).
         otherwise when ch is "(":
-            append(tokens, make_tok("LPAREN",   "(", state.line, tok_col)) state.pos = state.pos + 1 state.col = state.col + 1
+            append(tokens, make_tok("LPAREN",   "(", state.line, tok_col)) state.pos = state.pos + 1 state.col = state.col + 1 state.paren_depth = state.paren_depth + 1
         otherwise when ch is ")":
-            append(tokens, make_tok("RPAREN",   ")", state.line, tok_col)) state.pos = state.pos + 1 state.col = state.col + 1
+            append(tokens, make_tok("RPAREN",   ")", state.line, tok_col)) state.pos = state.pos + 1 state.col = state.col + 1 state.paren_depth = state.paren_depth - 1
         otherwise when ch is "[":
-            append(tokens, make_tok("LBRACKET", "[", state.line, tok_col)) state.pos = state.pos + 1 state.col = state.col + 1
+            append(tokens, make_tok("LBRACKET", "[", state.line, tok_col)) state.pos = state.pos + 1 state.col = state.col + 1 state.paren_depth = state.paren_depth + 1
         otherwise when ch is "]":
-            append(tokens, make_tok("RBRACKET", "]", state.line, tok_col)) state.pos = state.pos + 1 state.col = state.col + 1
+            append(tokens, make_tok("RBRACKET", "]", state.line, tok_col)) state.pos = state.pos + 1 state.col = state.col + 1 state.paren_depth = state.paren_depth - 1
         otherwise when ch is "{":
-            append(tokens, make_tok("LBRACE",   "{", state.line, tok_col)) state.pos = state.pos + 1 state.col = state.col + 1
+            append(tokens, make_tok("LBRACE",   "{", state.line, tok_col)) state.pos = state.pos + 1 state.col = state.col + 1 state.paren_depth = state.paren_depth + 1
         otherwise when ch is "}":
-            append(tokens, make_tok("RBRACE",   "}", state.line, tok_col)) state.pos = state.pos + 1 state.col = state.col + 1
+            append(tokens, make_tok("RBRACE",   "}", state.line, tok_col)) state.pos = state.pos + 1 state.col = state.col + 1 state.paren_depth = state.paren_depth - 1
         otherwise when ch is ",":
             append(tokens, make_tok("COMMA",    ",", state.line, tok_col)) state.pos = state.pos + 1 state.col = state.col + 1
         otherwise when ch is ":":

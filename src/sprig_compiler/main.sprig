@@ -2,17 +2,28 @@ include "src/sprig_compiler/lexer.sprig"
 include "src/sprig_compiler/parser.sprig"
 include "src/sprig_compiler/codegen.sprig"
 
-when args_count() < 3:
-    print("Usage: sprig src/sprig_compiler/main.sprig <input.sprig> <output.c>")
+shape Paths:
+    input_path: text
+    output_path: text
+
+let paths = Paths { input_path: "", output_path: "" }
+
+when args_count() >= 4:
+    // Running via C++ interpreter: sprig main.sprig <input> <output>
+    paths.input_path = args_get(2)
+    paths.output_path = args_get(3)
+otherwise when args_count() >= 3:
+    // Running as compiled binary: sprig2 <input> <output>
+    paths.input_path = args_get(1)
+    paths.output_path = args_get(2)
+otherwise:
+    print("Usage: sprig2 <input.sprig> <output.c>")
     exit(1)
 
-let input_path  = args_get(2)
-let output_path = args_get(3)
+let source     = read_file(paths.input_path)
+let tokens     = tokenize(source)
+let first_stmt = parse(tokens)
+let c_source   = codegen(first_stmt)
 
-let source      = read_file(input_path)
-let tokens      = tokenize(source)
-let first_stmt  = parse(tokens)
-let c_source    = codegen(first_stmt)
-
-write_file(output_path, c_source)
-print("Compiled " + input_path + " -> " + output_path)
+write_file(paths.output_path, c_source)
+print("Compiled " + paths.input_path + " -> " + paths.output_path)

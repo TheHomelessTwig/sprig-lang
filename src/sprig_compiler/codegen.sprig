@@ -189,6 +189,13 @@ define emit_expr(node_id):
         give back mangle(node.name)
 
     when node.kind is "binary":
+        // and/or must short-circuit (guards like "i+1<n and arr[i+1]..." rely
+        // on it) — C's && / || already short-circuit, sv_and/sv_or as plain
+        // function calls would not.
+        when node.op is "and":
+            give back "sv_bool(sv_truthy(" + emit_expr(node.child1) + ")&&sv_truthy(" + emit_expr(node.child2) + "))"
+        when node.op is "or":
+            give back "sv_bool(sv_truthy(" + emit_expr(node.child1) + ")||sv_truthy(" + emit_expr(node.child2) + "))"
         give back op_c(node.op) + "(" + emit_expr(node.child1) + "," + emit_expr(node.child2) + ")"
 
     when node.kind is "unary":

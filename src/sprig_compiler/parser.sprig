@@ -94,7 +94,13 @@ define linker_add(linker, node_id):
     otherwise:
         let tail_node = g_nodes[linker.last]
         tail_node.next = node_id
-    linker.last = node_id
+    // node_id may itself be the head of an existing chain (e.g. a whole
+    // included file's statement list) — walk to its true tail so the next
+    // linker_add() call appends after all of it, not just after the head.
+    let walker = NodeRef { id: node_id }
+    as long as g_nodes[walker.id].next >= 0:
+        walker.id = g_nodes[walker.id].next
+    linker.last = walker.id
 
 // ── Token navigation ──────────────────────────────────────────────────────────
 
@@ -181,6 +187,14 @@ define parse_statement(state, tokens):
     when token.kind is "SHAPE":
         state.pos = state.pos + 1
         give back parse_shape_def(state, tokens)
+
+    when token.kind is "INCLUDE":
+        state.pos = state.pos + 1
+        let path_token = p_expect(state, tokens, "STRING", "Expected string after 'include'")
+        p_match(state, tokens, "NEWLINE")
+        let included_source = read_file(path_token.value)
+        let included_tokens = tokenize(included_source)
+        give back parse(included_tokens)
 
     when token.kind is "WHEN":
         state.pos = state.pos + 1
@@ -374,6 +388,7 @@ define parse_or(state, tokens):
     let left_ref = NodeRef { id: parse_and(state, tokens) }
     as long as p_check(state, tokens, "OR"):
         state.pos = state.pos + 1
+        p_skip_struct(state, tokens)   // allow operand to start on the next line
         let right_id = parse_and(state, tokens)
         let node_id = alloc_node("binary")
         let node = g_nodes[node_id]
@@ -387,6 +402,7 @@ define parse_and(state, tokens):
     let left_ref = NodeRef { id: parse_not(state, tokens) }
     as long as p_check(state, tokens, "AND"):
         state.pos = state.pos + 1
+        p_skip_struct(state, tokens)   // allow operand to start on the next line
         let right_id = parse_not(state, tokens)
         let node_id = alloc_node("binary")
         let node = g_nodes[node_id]
@@ -412,6 +428,7 @@ define parse_equality(state, tokens):
                 p_check(state, tokens, "NEQ") or
                 p_check(state, tokens, "IS")):
         let op_token = p_advance(state, tokens)
+        p_skip_struct(state, tokens)   // allow operand to start on the next line
         let right_id = parse_comparison(state, tokens)
         let node_id = alloc_node("binary")
         let node = g_nodes[node_id]
@@ -428,6 +445,7 @@ define parse_comparison(state, tokens):
                 p_check(state, tokens, "LTE") or
                 p_check(state, tokens, "GTE")):
         let op_token = p_advance(state, tokens)
+        p_skip_struct(state, tokens)   // allow operand to start on the next line
         let right_id = parse_term(state, tokens)
         let node_id = alloc_node("binary")
         let node = g_nodes[node_id]
@@ -441,6 +459,7 @@ define parse_term(state, tokens):
     let left_ref = NodeRef { id: parse_factor(state, tokens) }
     as long as p_check(state, tokens, "PLUS") or p_check(state, tokens, "MINUS"):
         let op_token = p_advance(state, tokens)
+        p_skip_struct(state, tokens)   // allow operand to start on the next line
         let right_id = parse_factor(state, tokens)
         let node_id = alloc_node("binary")
         let node = g_nodes[node_id]
@@ -454,6 +473,7 @@ define parse_factor(state, tokens):
     let left_ref = NodeRef { id: parse_unary(state, tokens) }
     as long as p_check(state, tokens, "STAR") or p_check(state, tokens, "SLASH"):
         let op_token = p_advance(state, tokens)
+        p_skip_struct(state, tokens)   // allow operand to start on the next line
         let right_id = parse_unary(state, tokens)
         let node_id = alloc_node("binary")
         let node = g_nodes[node_id]
