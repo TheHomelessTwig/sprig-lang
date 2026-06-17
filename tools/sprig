@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Run a .sprig file via the self-hosted compiler — no C++ binary in the loop.
+#
+# Compiles $1 to C via build/sprig2, gcc's the result, runs it, forwards the
+# exit code, cleans up. Remaining args after the file are passed through to
+# the compiled program.
+#
+# One-time bootstrap of build/sprig2 (not done automatically — keeps this
+# script simple and avoids silently rebuilding a stale compiler):
+#   ./build/SPRIG-LANG src/sprig_compiler/main.sprig src/sprig_compiler/main.sprig build/sprig2.c
+#   gcc build/sprig2.c -o build/sprig2 -lm
+# Re-run those two lines whenever src/sprig_compiler/*.sprig changes.
+
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+sprig2="$repo_root/build/sprig2"
+
+if [[ ! -x "$sprig2" ]]; then
+    echo "error: $sprig2 not found. Bootstrap it first:" >&2
+    echo "  ./build/SPRIG-LANG src/sprig_compiler/main.sprig src/sprig_compiler/main.sprig build/sprig2.c" >&2
+    echo "  gcc build/sprig2.c -o build/sprig2 -lm" >&2
+    exit 1
+fi
+
+if [[ $# -lt 1 ]]; then
+    echo "Usage: $(basename "$0") <input.sprig> [program args...]" >&2
+    exit 1
+fi
+
+input_file="$1"
+shift
+
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+
+tmp_c="$tmp_dir/program.c"
+tmp_bin="$tmp_dir/program"
+
+"$sprig2" "$input_file" "$tmp_c"
+gcc "$tmp_c" -o "$tmp_bin" -lm
+"$tmp_bin" "$@"

@@ -44,6 +44,23 @@ The self-hosted compiler (lexer, parser, codegen) lives in `src/sprig_compiler/`
 
 It has bootstrapped — compiling itself produces output byte-identical to the previous generation. Language coverage now includes `borrow`/`borrow mutable`, `unsafe:` blocks, `own`, `input()`, and the raw pointer builtins, on top of functions, loops, and shapes. It still has no type checker or borrow checker of its own — those static-analysis passes (and the LSP) only exist in the C++ implementation, so use `./build/SPRIG-LANG` for compile-time error checking and editor support.
 
+### Running without the C++ binary
+
+`tools/sprig` runs a `.sprig` file end-to-end through the self-hosted compiler — compile to C, `gcc`, run, clean up — no `./build/SPRIG-LANG` involved:
+
+```bash
+tools/sprig tests/hello.sprig
+```
+
+It needs a one-time bootstrap of `build/sprig2` (not done automatically by the script):
+
+```bash
+./build/SPRIG-LANG src/sprig_compiler/main.sprig src/sprig_compiler/main.sprig build/sprig2.c
+gcc build/sprig2.c -o build/sprig2 -lm
+```
+
+Re-run those two lines whenever `src/sprig_compiler/*.sprig` changes.
+
 ## Syntax
 
 ### Variables
