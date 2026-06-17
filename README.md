@@ -4,7 +4,7 @@ A toy programming language with a custom English-like syntax. The primary implem
 
 Implements a lexer, recursive-descent parser, Hindley-Milner type checker, borrow checker, tree-walk interpreter, and LLVM IR code generator. Indentation-based — no braces or semicolons.
 
-An experimental self-hosted compiler — written in Sprig, compiling Sprig source to C — lives in `src/sprig_compiler/`. It is a work in progress: basic functions, loops, and shape-free programs compile and run correctly, but shape support still hangs the compiler. See [Self-hosted compiler](#self-hosted-compiler) below.
+An experimental self-hosted compiler — written in Sprig, compiling Sprig source to C — lives in `src/sprig_compiler/`. It is a work in progress: functions, loops, and shapes compile and run correctly. See [Self-hosted compiler](#self-hosted-compiler) below.
 
 ## Build
 
@@ -42,7 +42,7 @@ gcc output.c -o program -lm
 
 The self-hosted compiler (lexer, parser, codegen) lives in `src/sprig_compiler/`. The C runtime in `src/sprig_compiler/runtime.h` provides the OS interface layer (I/O, allocation) for compiled programs.
 
-This is experimental and not yet at parity with the C++ implementation — shape types currently hang the compiler. Use the C++ implementation (`./build/SPRIG-LANG`) for anything beyond basic functions and loops.
+This is experimental and not yet at full parity with the C++ implementation. Functions, loops, and shapes work; if something fails, fall back to the C++ implementation (`./build/SPRIG-LANG`).
 
 ## Syntax
 

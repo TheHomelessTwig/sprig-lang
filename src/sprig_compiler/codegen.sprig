@@ -291,6 +291,7 @@ define emit_stmt(state, node_id):
         let iter_var = cg_tmp(state)
         cg_line(state, "{ SprigVal " + iter_var + "=" + emit_expr(node.child1) + ";")
         cg_push(state)
+        cg_line(state, "SprigVal " + mangle(node.name) + ";")
         cg_line(state, "for(int _fi=0;_fi<" + iter_var + ".list->len;_fi++){")
         cg_push(state)
         cg_line(state, mangle(node.name) + "=" + iter_var + ".list->data[_fi];")
@@ -385,10 +386,10 @@ define codegen(first_stmt):
             when not (list_has(global_names, node.name)):
                 append(global_names, node.name)
             append(top_stmts, current.id)
-        otherwise when node.kind is "shape_def":
-            // Shapes are runtime constructs — no C struct needed
-            skip
-        otherwise:
+        otherwise when not (node.kind is "shape_def"):
+            // shape_def nodes are runtime constructs — no C struct needed,
+            // silently excluded from top_stmts rather than skipped (skip
+            // throws past current.id = node.next below, hanging the loop)
             append(top_stmts, current.id)
         current.id = node.next
 
