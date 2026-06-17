@@ -290,9 +290,15 @@ TypePtr TypeChecker::infer_expression(const Expression* expr) {
             TypePtr resolved_right = resolve(right_type);
             if (resolved_left->kind == Type::Kind::Text || resolved_right->kind == Type::Kind::Text)
                 return record(Type::make_text());
-            unify(left_type,  Type::make_number(), binary_expr->line);
-            unify(right_type, Type::make_number(), binary_expr->line);
-            return record(Type::make_number());
+            // Only force number when at least one side is already known numeric.
+            if (resolved_left->kind == Type::Kind::Number || resolved_right->kind == Type::Kind::Number) {
+                unify(left_type,  Type::make_number(), binary_expr->line);
+                unify(right_type, Type::make_number(), binary_expr->line);
+                return record(Type::make_number());
+            }
+            // Both sides unresolved — link them, defer to call-site inference.
+            unify(left_type, right_type, binary_expr->line);
+            return record(fresh());
         }
         if (binary_expr->op == "-" || binary_expr->op == "*" || binary_expr->op == "/") {
             unify(left_type,  Type::make_number(), binary_expr->line);

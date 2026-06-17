@@ -6,6 +6,11 @@ shape Token:
     line:  number
     col:   number  // column index; also stores indent level for INDENT_HINT
 
+// Single-field shape used as a cross-scope mutable counter (field assignment
+// crosses scope boundaries via the shared shape pointer; a plain `let` does not).
+shape MWPos:
+    i: number
+
 // All mutable scan state in one shape — field assignment works across scopes.
 shape LexerState:
     source:      text
@@ -293,19 +298,50 @@ define add_indent_tokens(raw):
         otherwise when tok.kind is "INDENT_HINT":
             pass.i = pass.i + 1   // discard any orphan hints
 
+        otherwise when tok.kind is "EOF":
+            // Close any still-open indent levels before EOF, not after —
+            // the parser must see pending DEDENTs before it sees EOF.
+            as long as length(stack) > 1:
+                pop(stack)
+                append(result, make_tok("DEDENT", "", tok.line, 0))
+            append(result, tok)
+            pass.i = pass.i + 1
+
         otherwise:
             append(result, tok)
             pass.i = pass.i + 1
 
-    // Close any still-open indent levels at end of file
-    as long as length(stack) > 1:
-        pop(stack)
-        append(result, make_tok("DEDENT", "", 0, 0))
+    give back result
 
+// ── Multi-word keyword collapsing ───────────────────────────────────────────
+// "give back" and "as long as" lex as separate keyword tokens above; collapse
+// them here into single RETURN / WHILE tokens before the parser sees them.
+
+define resolve_multiword(tokens):
+    let result = []
+    let pos = MWPos { i: 0 }
+    let n = length(tokens)
+    as long as pos.i < n:
+        let tok = tokens[pos.i]
+        when (tok.kind is "GIVE" and
+              pos.i + 1 < n and
+              tokens[pos.i + 1].kind is "BACK"):
+            append(result, make_tok("RETURN", "give back", tok.line, tok.col))
+            pos.i = pos.i + 2
+        otherwise when (tok.kind is "AS" and
+                        pos.i + 2 < n and
+                        tokens[pos.i + 1].kind is "LONG" and
+                        tokens[pos.i + 2].kind is "AS"):
+            append(result, make_tok("WHILE", "as long as", tok.line, tok.col))
+            pos.i = pos.i + 3
+        otherwise:
+            append(result, tok)
+            pos.i = pos.i + 1
     give back result
 
 // ── Public entry point ────────────────────────────────────────────────────────
 
 define tokenize(source):
-    let raw = scan_raw(source)
-    give back add_indent_tokens(raw)
+    let raw      = scan_raw(source)
+    let indented = add_indent_tokens(raw)
+    give back resolve_multiword(indented)
