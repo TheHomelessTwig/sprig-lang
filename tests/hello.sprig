@@ -1,10 +1,13 @@
+shape Counter:
+    n: number
+
 define greet(name):
     give back "Hello, " + name + "!"
 
 let msg = greet("Sprig")
 print(msg)
 
-let mutable count = 0
-as long as count < 3:
-    print(count)
-    let count = count + 1
+let c = Counter { n: 0 }
+as long as c.n < 3:
+    print(c.n)
+    c.n = c.n + 1

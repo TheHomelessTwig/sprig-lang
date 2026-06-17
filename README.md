@@ -1,8 +1,10 @@
 # Sprig
 
-A toy programming language with a custom English-like syntax. Written in C++17.
+A toy programming language with a custom English-like syntax. The primary implementation is written in C++17.
 
 Implements a lexer, recursive-descent parser, Hindley-Milner type checker, borrow checker, tree-walk interpreter, and LLVM IR code generator. Indentation-based — no braces or semicolons.
+
+An experimental self-hosted compiler — written in Sprig, compiling Sprig source to C — lives in `src/sprig_compiler/`. It is a work in progress: basic functions, loops, and shape-free programs compile and run correctly, but shape support still hangs the compiler. See [Self-hosted compiler](#self-hosted-compiler) below.
 
 ## Build
 
@@ -27,6 +29,20 @@ The build also produces `sprig-lsp`, an LSP server that push-publishes diagnosti
 ```bash
 sudo cmake --install build   # installs sprig-lsp to /usr/local/bin
 ```
+
+## Self-hosted compiler
+
+A compiler for Sprig, written in Sprig, that compiles Sprig source to C:
+
+```bash
+sprig src/sprig_compiler/main.sprig input.sprig output.c
+gcc output.c -o program -lm
+./program
+```
+
+The self-hosted compiler (lexer, parser, codegen) lives in `src/sprig_compiler/`. The C runtime in `src/sprig_compiler/runtime.h` provides the OS interface layer (I/O, allocation) for compiled programs.
+
+This is experimental and not yet at parity with the C++ implementation — shape types currently hang the compiler. Use the C++ implementation (`./build/SPRIG-LANG`) for anything beyond basic functions and loops.
 
 ## Syntax
 
@@ -335,6 +351,12 @@ src/
   interpreter.cpp    — tree-walk interpreter
   codegen.cpp        — LLVM IR code generator
   lsp.cpp            — JSON-RPC LSP server (push diagnostics on change)
+  sprig_compiler/
+    lexer.sprig      — Sprig tokeniser (written in Sprig)
+    parser.sprig     — Sprig parser (written in Sprig)
+    codegen.sprig    — C code emitter (written in Sprig)
+    main.sprig       — self-hosted compiler entry point
+    runtime.h        — C runtime (SprigVal, built-ins) for compiled output
 include/
   lexer.hpp          — Token, TokenType, Lexer
   parser.hpp         — Parser

@@ -1,1 +1,21 @@
+# Build output
+build/
+
+# Generated LLVM IR and C files
+*.ll
+*.c.out
+
+# Self-host compiler intermediate output
+/tmp/
+
+# OS / editor
+.DS_Store
 .claude/
+*.swp
+*.swo
+.direnv/
+.env
+
+# Python
+__pycache__/
+*.pyc
