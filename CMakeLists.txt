@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.19...3.26) # 3.19 required for modern Apple Sil
 
 # Define the project and enable C++ support
 project(SPRIG-LANG
-    VERSION 0.6.0
+    VERSION 0.7.0
     LANGUAGES CXX
 )
 

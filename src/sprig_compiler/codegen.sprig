@@ -67,6 +67,8 @@ define builtin_c(name):
     when name is "ptr_add":         give back "sprig_ptr_add"
     when name is "ptr_to_number":   give back "sprig_ptr_to_number"
     when name is "number_to_ptr":   give back "sprig_number_to_ptr"
+    when name is "write_stdout":    give back "sprig_write_stdout"
+    when name is "stdin_read":      give back "sprig_stdin_read"
     give back ""
 
 // ── Operator → C function ─────────────────────────────────────────────────────

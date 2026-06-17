@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Build the syntax-only Sprig LSP server (src/sprig_compiler/lsp.sprig) into
+# build/sprig-lsp-lite. Needs ./build/SPRIG-LANG (or build/sprig2, if already
+# bootstrapped) to compile it once; the resulting binary has no further
+# dependency on either.
+
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+compiler="./build/SPRIG-LANG"
+extra_arg=()
+if [[ -x "./build/sprig2" ]]; then
+    compiler="./build/sprig2"
+else
+    extra_arg=("src/sprig_compiler/main.sprig")
+fi
+
+"$compiler" "${extra_arg[@]}" src/sprig_compiler/lsp.sprig build/sprig-lsp-lite.c
+gcc build/sprig-lsp-lite.c -o build/sprig-lsp-lite -lm
+
+echo "Built build/sprig-lsp-lite"

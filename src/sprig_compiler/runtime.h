@@ -246,6 +246,24 @@ static SprigVal sprig_print(SprigVal v) {
     printf("\n");
     return sv_nil();
 }
+// No trailing newline (unlike print) — needed for exact-byte protocols like
+// LSP's Content-Length framing, where print()'s implicit "\n" would corrupt
+// the stream.
+static SprigVal sprig_write_stdout(SprigVal v) {
+    if (v.k == SV_STR) { fputs(v.str, stdout); fflush(stdout); }
+    return sv_nil();
+}
+// Reads exactly n bytes from stdin (binary-safe, unlike input()'s
+// line-oriented fgets) — needed to read a Content-Length-bounded message
+// body that may exceed input()'s 1024-byte line buffer.
+static SprigVal sprig_stdin_read(SprigVal n) {
+    long count = (long)n.num;
+    if (count < 0) count = 0;
+    char *buf = malloc((size_t)count + 1);
+    long got = (long)fread(buf, 1, (size_t)count, stdin);
+    buf[got] = 0;
+    return sv_str(buf);
+}
 static SprigVal sprig_length(SprigVal v) {
     if (v.k == SV_LIST) return sv_num(v.list->len);
     if (v.k == SV_STR && v.str) return sv_num(strlen(v.str));

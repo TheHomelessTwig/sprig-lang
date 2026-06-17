@@ -59,6 +59,20 @@ It needs a one-time bootstrap of `build/sprig2` (not done automatically by the s
 gcc build/sprig2.c -o build/sprig2 -lm
 ```
 
+Re-run those two lines whenever `src/sprig_compiler/*.sprig` changes — `tools/build-sprig-lsp` will silently use a stale `build/sprig2` if one exists, which can emit calls to builtins that didn't exist when it was last built.
+
+### Syntax-only LSP (no C++ binary)
+
+`src/sprig_compiler/lsp.sprig` is a minimal LSP server written in Sprig itself, using the self-hosted lexer and parser. It implements `initialize`, `textDocument/didOpen`/`didChange`/`didClose`, `shutdown`, and `exit`, and reports **parse errors only** as diagnostics — it has no type checker or borrow checker, so it won't catch type mismatches or ownership violations the way `sprig-lsp` (the C++ LSP) does. Use it when you want basic diagnostics without the C++ binary in the loop; fall back to `sprig-lsp` for full coverage.
+
+Build it with:
+
+```bash
+tools/build-sprig-lsp
+```
+
+This produces `build/sprig-lsp-lite`, a standalone binary with no further dependency on either implementation — point your editor at it the same way you would `sprig-lsp`.
+
 Re-run those two lines whenever `src/sprig_compiler/*.sprig` changes.
 
 ## Syntax
@@ -373,7 +387,11 @@ src/
     parser.sprig     — Sprig parser (written in Sprig)
     codegen.sprig    — C code emitter (written in Sprig)
     main.sprig       — self-hosted compiler entry point
+    lsp.sprig        — syntax-only LSP server (written in Sprig)
     runtime.h        — C runtime (SprigVal, built-ins) for compiled output
+tools/
+  sprig              — run a .sprig file via the self-host compiler, no C++
+  build-sprig-lsp    — build src/sprig_compiler/lsp.sprig to build/sprig-lsp-lite
 include/
   lexer.hpp          — Token, TokenType, Lexer
   parser.hpp         — Parser

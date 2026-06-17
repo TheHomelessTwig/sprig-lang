@@ -668,7 +668,15 @@ define parse_primary(state, tokens):
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
-define parse(tokens):
+// Holds enough info for a caller (e.g. an LSP) to report an error itself
+// instead of having it printed to stdout — parse() below wraps this and
+// keeps printing for CLI callers, unchanged.
+shape ParseResult:
+    first_stmt: number
+    had_error:  flag
+    error_msg:  text
+
+define parse_checked(tokens):
     let state = ParseState { pos: 0, had_error: false, error_msg: "" }
     let prog_linker = linker_new()
     p_skip_nl(state, tokens)
@@ -678,8 +686,16 @@ define parse(tokens):
         let stmt_id = parse_statement(state, tokens)
         when stmt_id >= 0:
             linker_add(prog_linker, stmt_id)
-        when state.had_error:
-            print("Parse error: " + state.error_msg)
-            stop
+        when state.had_error: stop
         p_skip_nl(state, tokens)
-    give back prog_linker.first
+    give back ParseResult {
+        first_stmt: prog_linker.first,
+        had_error: state.had_error,
+        error_msg: state.error_msg
+    }
+
+define parse(tokens):
+    let result = parse_checked(tokens)
+    when result.had_error:
+        print("Parse error: " + result.error_msg)
+    give back result.first_stmt

@@ -1,0 +1,255 @@
+// ── src/sprig_compiler/lsp.sprig ─────────────────────────────────────────────
+// Minimal LSP server, written in Sprig, using the self-host lexer/parser.
+// Syntax-only: reports PARSE errors as diagnostics. No type checking or
+// borrow checking — those static-analysis passes only exist in the C++
+// implementation's sprig-lsp. Use this when you want editor diagnostics
+// without the C++ binary in the loop; fall back to sprig-lsp for full
+// type/borrow error coverage.
+//
+// JSON handling here is hand-rolled, not a general parser — it only looks
+// for the specific "key": pattern of the handful of LSP messages this
+// server understands. This is safe from false matches inside file content
+// because JSON escaping guarantees every embedded '"' in a string value is
+// backslash-escaped — an unescaped '"key":' sequence can only be a real
+// structural key, never something inside escaped source text.
+
+include "src/sprig_compiler/lexer.sprig"
+include "src/sprig_compiler/parser.sprig"
+
+// ── Generic string scanning ──────────────────────────────────────────────────
+
+define matches_at(haystack, needle, pos):
+    let n_len = length(needle)
+    let j = NodeRef { id: 0 }
+    as long as j.id < n_len:
+        when not (haystack[pos + j.id] is needle[j.id]):
+            give back false
+        j.id = j.id + 1
+    give back true
+
+define find_substring(haystack, needle, start):
+    let h_len = length(haystack)
+    let n_len = length(needle)
+    let i = NodeRef { id: start }
+    as long as i.id + n_len <= h_len:
+        when matches_at(haystack, needle, i.id):
+            give back i.id
+        i.id = i.id + 1
+    give back -1
+
+define strip_trailing_cr(s):
+    let len = length(s)
+    when len > 0 and s[len - 1] is "\r":
+        give back substring(s, 0, len - 1)
+    give back s
+
+// ── JSON (minimal, just enough for the messages this server handles) ───────
+
+define json_escape(s):
+    let result = StrRef { s: "" }
+    let i = NodeRef { id: 0 }
+    let len = length(s)
+    as long as i.id < len:
+        let ch = s[i.id]
+        let code = char_code(ch)
+        when ch is "\"":   result.s = result.s + "\\\""
+        otherwise when ch is "\\": result.s = result.s + "\\\\"
+        otherwise when code is 10: result.s = result.s + "\\n"
+        otherwise when code is 13: result.s = result.s + "\\r"
+        otherwise when code is 9:  result.s = result.s + "\\t"
+        otherwise: result.s = result.s + ch
+        i.id = i.id + 1
+    give back result.s
+
+// Decodes a JSON string value, given the index of its opening quote.
+define json_decode_string_at(body, quote_idx):
+    let result = StrRef { s: "" }
+    let i = NodeRef { id: quote_idx + 1 }
+    let len = length(body)
+    as long as i.id < len and not (body[i.id] is "\""):
+        when body[i.id] is "\\":
+            i.id = i.id + 1
+            when i.id >= len: stop
+            let esc = body[i.id]
+            when esc is "n":        result.s = result.s + "\n"
+            otherwise when esc is "t": result.s = result.s + "\t"
+            otherwise when esc is "r": result.s = result.s + "\r"
+            otherwise when esc is "\"": result.s = result.s + "\""
+            otherwise when esc is "\\": result.s = result.s + "\\"
+            otherwise when esc is "/": result.s = result.s + "/"
+            otherwise: result.s = result.s + esc
+            i.id = i.id + 1
+        otherwise:
+            result.s = result.s + body[i.id]
+            i.id = i.id + 1
+    give back result.s
+
+define json_has_key(body, key):
+    give back find_substring(body, "\"" + key + "\":", 0) >= 0
+
+// Finds "key": and returns the decoded string value that follows it.
+// Returns "" if the key is absent or its value isn't a string.
+define json_extract_string(body, key):
+    let pattern = "\"" + key + "\":"
+    let key_idx = find_substring(body, pattern, 0)
+    when key_idx < 0: give back ""
+    let val_start = NodeRef { id: key_idx + length(pattern) }
+    let len = length(body)
+    as long as val_start.id < len and (body[val_start.id] is " "):
+        val_start.id = val_start.id + 1
+    when val_start.id >= len or not (body[val_start.id] is "\""):
+        give back ""
+    give back json_decode_string_at(body, val_start.id)
+
+// Returns the raw "id" value text, suitable for echoing verbatim into a
+// response (numbers/null pass through as-is; strings keep their quotes).
+define json_extract_id_raw(body):
+    let pattern = "\"id\":"
+    let key_idx = find_substring(body, pattern, 0)
+    when key_idx < 0: give back "null"
+    let val_start = NodeRef { id: key_idx + length(pattern) }
+    let len = length(body)
+    as long as val_start.id < len and (body[val_start.id] is " "):
+        val_start.id = val_start.id + 1
+    when val_start.id < len and body[val_start.id] is "\"":
+        give back "\"" + json_escape(json_decode_string_at(body, val_start.id)) + "\""
+    let end_idx = NodeRef { id: val_start.id }
+    as long as (end_idx.id < len and
+                not (body[end_idx.id] is ",") and
+                not (body[end_idx.id] is "}") and
+                not (body[end_idx.id] is " ") and
+                not (body[end_idx.id] is "\n") and
+                not (body[end_idx.id] is "\r")):
+        end_idx.id = end_idx.id + 1
+    give back substring(body, val_start.id, end_idx.id - val_start.id)
+
+// ── LSP stdio framing ─────────────────────────────────────────────────────────
+
+define read_header_line():
+    give back strip_trailing_cr(input(nothing))
+
+shape ReadState:
+    content_length: number
+    done: flag
+
+// Reads one full LSP message (headers + body) from stdin. Returns "" on
+// EOF/no more messages.
+define read_message():
+    let st = ReadState { content_length: -1, done: false }
+    as long as not st.done:
+        let line = read_header_line()
+        when length(line) is 0:
+            st.done = true
+        otherwise when length(line) >= 15 and (substring(line, 0, 15) is "Content-Length:"):
+            let rest = substring(line, 15, length(line) - 15)
+            st.content_length = to_number(rest)
+    when st.content_length < 0:
+        give back ""
+    give back stdin_read(st.content_length)
+
+define send_message(body):
+    write_stdout("Content-Length: " + to_text(length(body)) + "\r\n\r\n" + body)
+
+// ── Diagnostics ───────────────────────────────────────────────────────────────
+
+// error_msg embeds the line number as "... at line N" — pull it back out.
+define extract_error_line(msg):
+    let marker = "at line "
+    let idx = find_substring(msg, marker, 0)
+    when idx < 0: give back 1
+    let start = idx + length(marker)
+    let len = length(msg)
+    let end_idx = NodeRef { id: start }
+    as long as end_idx.id < len and is_digit(msg[end_idx.id]):
+        end_idx.id = end_idx.id + 1
+    when end_idx.id is start: give back 1
+    give back to_number(substring(msg, start, end_idx.id - start))
+
+shape DiagInfo:
+    line0: number
+    items: text
+
+define publish_diagnostics(uri, source_text):
+    let tokens = tokenize(source_text)
+    let result = parse_checked(tokens)
+    let diag = DiagInfo { line0: 0, items: "[]" }
+    when result.had_error:
+        let raw_line0 = extract_error_line(result.error_msg) - 1
+        when raw_line0 < 0:
+            diag.line0 = 0
+        otherwise:
+            diag.line0 = raw_line0
+        diag.items = ("[{\"range\":{\"start\":{\"line\":" + to_text(diag.line0) +
+            ",\"character\":0},\"end\":{\"line\":" + to_text(diag.line0) +
+            ",\"character\":999}},\"severity\":1,\"source\":\"sprig\",\"message\":\"" +
+            json_escape(result.error_msg) + "\"}]")
+    let body = ("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\"," +
+        "\"params\":{\"uri\":\"" + json_escape(uri) + "\",\"diagnostics\":" + diag.items + "}}")
+    send_message(body)
+
+// ── Message dispatch ──────────────────────────────────────────────────────────
+
+define make_initialize_result(id_raw):
+    give back ("{\"jsonrpc\":\"2.0\",\"id\":" + id_raw +
+        ",\"result\":{\"capabilities\":{\"textDocumentSync\":1}," +
+        "\"serverInfo\":{\"name\":\"sprig-lsp-lite\"}}}")
+
+define make_null_result(id_raw):
+    give back "{\"jsonrpc\":\"2.0\",\"id\":" + id_raw + ",\"result\":null}"
+
+// give back true to keep the server running, false to exit.
+define handle_message(body):
+    let method = json_extract_string(body, "method")
+
+    when method is "initialize":
+        send_message(make_initialize_result(json_extract_id_raw(body)))
+        give back true
+
+    when method is "textDocument/didOpen":
+        let uri = json_extract_string(body, "uri")
+        let doc_text = json_extract_string(body, "text")
+        publish_diagnostics(uri, doc_text)
+        give back true
+
+    when method is "textDocument/didChange":
+        let uri = json_extract_string(body, "uri")
+        let doc_text = json_extract_string(body, "text")
+        publish_diagnostics(uri, doc_text)
+        give back true
+
+    when method is "textDocument/didClose":
+        let uri = json_extract_string(body, "uri")
+        send_message("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\"," +
+            "\"params\":{\"uri\":\"" + json_escape(uri) + "\",\"diagnostics\":[]}}")
+        give back true
+
+    when method is "shutdown":
+        send_message(make_null_result(json_extract_id_raw(body)))
+        give back true
+
+    when method is "exit":
+        give back false
+
+    when json_has_key(body, "id"):
+        // Unhandled request — still must respond so the client doesn't hang.
+        send_message(make_null_result(json_extract_id_raw(body)))
+        give back true
+
+    // Unhandled notification (e.g. "initialized") — no response needed.
+    give back true
+
+// ── Main loop ─────────────────────────────────────────────────────────────────
+
+shape RunState:
+    running: flag
+
+define run_lsp():
+    let st = RunState { running: true }
+    as long as st.running:
+        let msg = read_message()
+        when length(msg) is 0:
+            st.running = false
+        otherwise:
+            st.running = handle_message(msg)
+
+run_lsp()
