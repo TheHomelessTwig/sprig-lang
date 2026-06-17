@@ -42,7 +42,7 @@ gcc output.c -o program -lm
 
 The self-hosted compiler (lexer, parser, codegen) lives in `src/sprig_compiler/`. The C runtime in `src/sprig_compiler/runtime.h` provides the OS interface layer (I/O, allocation) for compiled programs.
 
-It has bootstrapped — compiling itself produces output byte-identical to the previous generation. It is still narrower than the C++ implementation (fewer builtins, less complete error reporting); fall back to `./build/SPRIG-LANG` for anything it doesn't yet cover.
+It has bootstrapped — compiling itself produces output byte-identical to the previous generation. Language coverage now includes `borrow`/`borrow mutable`, `unsafe:` blocks, `own`, `input()`, and the raw pointer builtins, on top of functions, loops, and shapes. It still has no type checker or borrow checker of its own — those static-analysis passes (and the LSP) only exist in the C++ implementation, so use `./build/SPRIG-LANG` for compile-time error checking and editor support.
 
 ## Syntax
 

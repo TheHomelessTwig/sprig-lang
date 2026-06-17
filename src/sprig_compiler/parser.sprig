@@ -184,6 +184,13 @@ define parse_statement(state, tokens):
         state.pos = state.pos + 1
         give back parse_define(state, tokens)
 
+    when token.kind is "UNSAFE":
+        // unsafe is a no-op wrapper at codegen time (matches codegen.cpp) —
+        // splice the inner block's statements straight in, no wrapper node.
+        // Relies on linker_add() walking to the true tail of a chain.
+        state.pos = state.pos + 1
+        give back parse_block(state, tokens)
+
     when token.kind is "SHAPE":
         state.pos = state.pos + 1
         give back parse_shape_def(state, tokens)
@@ -254,7 +261,11 @@ define parse_let(state, tokens):
         node.flag_val = true
     let name_token = p_expect(state, tokens, "IDENT", "Expected variable name after 'let'")
     node.name = name_token.value
-    p_expect(state, tokens, "ASSIGN", "Expected '=' after variable name")
+    // `let x borrow y` / `let x borrow mutable y` has no '=' — the BORROW
+    // case in parse_unary consumes the keyword(s) and the rest reads the
+    // same as a normal assignment.
+    when not (p_check(state, tokens, "BORROW")):
+        p_expect(state, tokens, "ASSIGN", "Expected '=' after variable name")
     node.child1 = parse_expression(state, tokens)
     p_match(state, tokens, "NEWLINE")
     give back node_id
@@ -484,6 +495,19 @@ define parse_factor(state, tokens):
     give back left_ref.id
 
 define parse_unary(state, tokens):
+    // borrow/borrow mutable/own are pure aliasing at codegen time (matches
+    // codegen.cpp's no-op pass-through for these — SprigVal shapes/lists are
+    // already heap pointers) — parse and discard the keyword(s), return the
+    // inner expression's id unchanged with no wrapper node.
+    when p_check(state, tokens, "BORROW"):
+        state.pos = state.pos + 1
+        p_match(state, tokens, "MUTABLE")
+        give back parse_unary(state, tokens)
+
+    when p_check(state, tokens, "OWN"):
+        state.pos = state.pos + 1
+        give back parse_unary(state, tokens)
+
     when p_check(state, tokens, "MINUS"):
         state.pos = state.pos + 1
         let node_id = alloc_node("unary")

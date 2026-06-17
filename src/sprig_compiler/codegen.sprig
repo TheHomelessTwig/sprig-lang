@@ -59,6 +59,14 @@ define builtin_c(name):
     when name is "args_count":      give back "sprig_args_count"
     when name is "args_get":        give back "sprig_args_get"
     when name is "exit":            give back "sprig_exit"
+    when name is "input":           give back "sprig_input"
+    when name is "allocate":        give back "sprig_allocate"
+    when name is "free":            give back "sprig_free"
+    when name is "read":            give back "sprig_read"
+    when name is "write":           give back "sprig_write"
+    when name is "ptr_add":         give back "sprig_ptr_add"
+    when name is "ptr_to_number":   give back "sprig_ptr_to_number"
+    when name is "number_to_ptr":   give back "sprig_number_to_ptr"
     give back ""
 
 // ── Operator → C function ─────────────────────────────────────────────────────

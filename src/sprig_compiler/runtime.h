@@ -1,6 +1,7 @@
 #ifndef SPRIG_RUNTIME_H
 #define SPRIG_RUNTIME_H
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -336,5 +337,38 @@ static SprigVal sprig_exit(SprigVal code) {
     exit((int)code.num);
     return sv_nil();
 }
+
+static SprigVal sprig_input(SprigVal prompt) {
+    if (prompt.k == SV_STR) { fputs(prompt.str, stdout); fflush(stdout); }
+    char buf[1024];
+    if (!fgets(buf, sizeof(buf), stdin)) return sv_str("");
+    size_t len = strlen(buf);
+    if (len > 0 && buf[len - 1] == '\n') buf[len - 1] = 0;
+    char *owned = malloc(len + 1);
+    memcpy(owned, buf, len + 1);
+    return sv_str(owned);
+}
+
+// Raw pointer ops: addresses are encoded as doubles in SprigVal.num,
+// matching the LLVM backend's pointer_to_double representation.
+static SprigVal sprig_allocate(SprigVal n) {
+    return sv_num((double)(intptr_t)malloc((size_t)n.num));
+}
+static SprigVal sprig_free(SprigVal addr) {
+    free((void *)(intptr_t)addr.num);
+    return sv_nil();
+}
+static SprigVal sprig_read(SprigVal addr) {
+    return sv_num(*(double *)(intptr_t)addr.num);
+}
+static SprigVal sprig_write(SprigVal addr, SprigVal val) {
+    *(double *)(intptr_t)addr.num = val.num;
+    return sv_nil();
+}
+static SprigVal sprig_ptr_add(SprigVal addr, SprigVal n) {
+    return sv_num((double)((intptr_t)addr.num + (intptr_t)n.num));
+}
+static SprigVal sprig_ptr_to_number(SprigVal addr) { return addr; }
+static SprigVal sprig_number_to_ptr(SprigVal n) { return n; }
 
 #endif /* SPRIG_RUNTIME_H */
